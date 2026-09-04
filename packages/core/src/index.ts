@@ -64,20 +64,14 @@ export type {
   TurnId,
   TurnInput,
 } from "./pi-runtime.ts";
-export { SharedComputer, SharedComputerOptionsSchema } from "./shared-computer.ts";
-export type { SharedComputerOptions } from "./shared-computer.ts";
-export { BrowserCdp, BrowserCdpArgumentsSchema, BrowserCdpInputSchema } from "./browser-cdp.ts";
-export type { BrowserCdpArguments, BrowserCdpInput } from "./browser-cdp.ts";
 export {
-  LocalComputerClient,
-  LocalComputerClientOptionsSchema,
-  LocalComputerOperationSchema,
-  LocalComputerRequestSchema,
-  LocalComputerResultSchema,
-} from "./local-computer.ts";
-export type {
-  LocalComputerClientOptions,
-  LocalComputerOperation,
-  LocalComputerRequest,
-  LocalComputerResult,
-} from "./local-computer.ts";
+  SandboxComputer,
+  SandboxComputerOptionsSchema,
+} from "./sandbox-computer.ts";
+export type { SandboxComputerOptions } from "./sandbox-computer.ts";
+export {
+  BrowserArgumentsSchema,
+  BrowserInputSchema,
+  SandboxBrowser,
+} from "./sandbox-browser.ts";
+export type { BrowserArguments, BrowserInput } from "./sandbox-browser.ts";

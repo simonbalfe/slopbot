@@ -2,19 +2,14 @@
 
 ```mermaid
 flowchart TB
-  subgraph Mac["Your Mac"]
-    Electron["SlopBot Electron UI"]
-    Companion["Read-only local companion"]
-    Approval["Native Allow once / Deny prompt"]
-    Home[("User home directory")]
-  end
+  Browser["Vite + React web UI<br/>TanStack Router + shadcn/ui"]
 
   subgraph Host["Docker host"]
-    subgraph Docker["SlopBot Docker container"]
-      API["Bun HTTP API"]
+    subgraph App["SlopBot container"]
+      API["Hono + oRPC<br/>typed API"]
+      Config["Zod environment config"]
       Controller["Agent controller"]
-      LocalClient["Local computer client"]
-      Store[("SQLite<br/>agents, transcripts,<br/>message queue, screen assignments")]
+      Store[("SQLite<br/>agents, transcripts,<br/>message queue, sandbox assignments")]
       Runtime["Pi SDK<br/>in-process sessions + tools"]
       Codex["OpenAI Codex subscription"]
 
@@ -23,23 +18,14 @@ flowchart TB
         Worker["WORKER<br/>worker"]
       end
 
-      subgraph Computer["One shared virtual computer"]
-        Workspace[("Shared /workspace")]
-        Xvfb["One Xvfb server<br/>:99"]
-        S0["Screen :99.0<br/>LEAD"]
-        S1["Screen :99.1<br/>WORKER"]
-        Browsers["Openbox + persistent Chromium<br/>one profile per agent"]
-        CDP["Private CDP endpoints<br/>127.0.0.1:9222 and :9223"]
-        VNC["x11vnc + noVNC<br/>ports 6080 and 6081"]
-      end
     end
+    LeadSandbox["Agent Infra sandbox<br/>LEAD browser + VNC"]
+    WorkerSandbox["Agent Infra sandbox<br/>WORKER browser + VNC"]
+    Workspace[("Mounted workspace")]
   end
 
-  Electron -->|"HTTP"| API
-  Controller --> LocalClient
-  LocalClient -->|"typed read request over Tailscale"| Companion
-  Companion --> Approval
-  Approval -->|"Allow once"| Home
+  Browser -->|"HTTP"| API
+  Config --> API
   API --> Controller
   Controller <--> Store
   Controller <--> Runtime
@@ -51,25 +37,22 @@ flowchart TB
   Store -->|"later hidden wake"| Controller
 
   Agents --> Workspace
-  Controller --> Xvfb
-  Xvfb --> S0 & S1
-  S0 & S1 --> Browsers
-  Agents -->|"browser_cdp"| CDP
-  CDP --> Browsers
-  Browsers --> VNC
-  VNC -->|"human browser login"| Electron
+  Controller -->|"Agent Infra TypeScript SDK"| LeadSandbox & WorkerSandbox
+  LeadSandbox & WorkerSandbox --> Workspace
+  LeadSandbox & WorkerSandbox -->|"separate human login"| Browser
 ```
 
 ## Implemented
 
 - Stable `lead` and `worker` IDs with separate runtime sessions and transcripts.
-- SQLite-backed message envelopes, delivery state, transcript events, and X11 screen assignments.
+- SQLite-backed message envelopes, delivery state, transcript events, and sandbox assignments.
 - Fire-and-forget peer messaging through `send_to_agent`; replies arrive later as new durable messages.
 - Skills and coding tools exposed by Pi.
-- One shared Linux computer with two X11 screens, a shared workspace, and one persistent Chromium profile per agent.
-- Private CDP browser control and Electron live-screen preview with user input forwarding.
-- Approval-gated read-only access to the user's Mac through a separate local companion.
-- React, Vite, and Tailwind Electron renderer. Chat bubbles are content-sized and Markdown is safely rendered by a small local renderer.
+- One Agent Infra browser sandbox per agent with a shared mounted workspace.
+- SDK-backed browser navigation, selectors, page text, evaluation, screenshots, and user input.
+- React, Vite, Tailwind, shadcn/ui, and TanStack Router web UI.
+- Hono-hosted oRPC calls share the server router type directly with the web client.
+- Environment variables are parsed once through the Zod schema in `packages/config`.
 
 ## Runtime boundary
 
@@ -77,4 +60,4 @@ SlopBot owns identity, persistence, messaging, agent scheduling, browser control
 
 ## Runtime
 
-Pi runs in-process and owns model sessions, ChatGPT subscription authentication, skill discovery, and generic shell/file tooling. SlopBot continues to execute `send_to_agent`, `browser_cdp`, `local_read_file`, and `local_list_directory` through its validated host handlers.
+Pi runs in-process and owns model sessions, ChatGPT subscription authentication, skill discovery, and generic shell/file tooling. SlopBot executes `send_to_agent` locally and routes the validated `browser` tool through the Agent Infra SDK.

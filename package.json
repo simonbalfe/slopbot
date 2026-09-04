@@ -2,15 +2,19 @@
   "name": "slopbot-monorepo",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "start": "bun run build:web && bun run build:electron && bun run --filter @slopbot/desktop start",
+    "dev": "docker compose up -d --build && bun run --filter @slopbot/web dev",
+    "start": "bun run build && bun run start:server",
     "start:server": "bun run --filter @slopbot/server start",
     "check": "bun run --filter '*' check",
-    "build": "bun run build:web && bun run build:server && bun run build:electron",
+    "test": "bun test",
+    "build": "bun run build:web && bun run build:server",
     "build:web": "bun run --filter @slopbot/web build",
-    "build:server": "bun run --filter @slopbot/server build",
-    "build:electron": "bun run --filter @slopbot/desktop build"
+    "build:server": "bun run --filter @slopbot/server build"
   },
   "devDependencies": {
     "bun-types": "1.3.5",

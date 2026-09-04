@@ -9,6 +9,9 @@
     "build": "bun build src/index.ts --target=bun --outdir=dist"
   },
   "dependencies": {
+    "@orpc/server": "^1.15.0",
+    "@slopbot/config": "workspace:*",
+    "hono": "^4.13.5",
     "slopbot": "workspace:*",
     "zod": "4.5.4"
   }

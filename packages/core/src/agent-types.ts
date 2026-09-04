@@ -6,13 +6,15 @@ import { SandboxModeSchema, ThreadIdSchema } from "./runtime-types.ts";
 export const AgentIdSchema = textSchema(100).brand<"AgentId">();
 export const MessageIdSchema = z.uuid().brand<"MessageId">();
 export const AgentStatusSchema = z.enum(["idle", "running", "error"]);
-export const MessageStatusSchema = z.enum(["queued", "processing", "delivered", "failed"]);
+export const MessageStatusSchema = z.enum([
+  "queued",
+  "processing",
+  "delivered",
+  "failed",
+]);
 export const DesktopAssignmentSchema = z.object({
-  computerId: z.literal("shared"),
-  display: z.string().regex(/^:\d+\.\d+$/),
+  computerId: z.literal("agent-infra"),
   screen: z.number().int().nonnegative(),
-  browserProfile: z.string().min(1),
-  cdpUrl: z.url(),
   viewerUrl: z.url().nullable(),
 });
 export const AgentProfileSchema = z.object({
@@ -62,7 +64,9 @@ export type AgentId = z.infer<typeof AgentIdSchema>;
 export type MessageId = z.infer<typeof MessageIdSchema>;
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 export type MessageStatus = z.infer<typeof MessageStatusSchema>;
-export type DesktopAssignment = Readonly<z.infer<typeof DesktopAssignmentSchema>>;
+export type DesktopAssignment = Readonly<
+  z.infer<typeof DesktopAssignmentSchema>
+>;
 export type AgentProfile = Readonly<z.infer<typeof AgentProfileSchema>>;
 export type MessageEnvelope = Readonly<z.infer<typeof MessageEnvelopeSchema>>;
 export type AgentMessage = Readonly<z.infer<typeof AgentMessageSchema>>;

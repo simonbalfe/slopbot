@@ -1,49 +1,27 @@
 import { createRoot } from "react-dom/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
-import { z } from "zod";
+import {
+  Outlet,
+  RouterProvider,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router";
 
-import "./style.css";
+import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
+import "./index.css";
 
-const MessageSchema = z.object({
-  id: z.string(),
-  role: z.enum(["user", "agent", "assistant"]),
-  direction: z.enum(["inbound", "outbound"]),
-  text: z.string(),
-  createdAt: z.string(),
-});
-const AgentSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  role: z.string(),
-  status: z.enum(["idle", "running", "error"]),
-  desktop: z.object({ cdpUrl: z.string() }).nullable(),
-  messages: z.array(MessageSchema),
-});
-const AgentsSchema = z.array(AgentSchema);
-const SkillsSchema = z.array(
-  z.object({ name: z.string(), description: z.string() }),
-);
-const AuthStateSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("authenticated") }),
-  z.object({ status: z.literal("unauthenticated") }),
-  z.object({ status: z.literal("starting"), message: z.string() }),
-  z.object({
-    status: z.literal("pending"),
-    verificationUri: z.url(),
-    userCode: z.string(),
-  }),
-  z.object({ status: z.literal("error"), message: z.string() }),
-]);
-
-type Agent = z.infer<typeof AgentSchema>;
-type Message = z.infer<typeof MessageSchema>;
-type BrowserInput = Readonly<Record<string, string | number>>;
-type AuthState = z.infer<typeof AuthStateSchema>;
+type Agent = Awaited<ReturnType<typeof api.agents.list>>[number];
+type Message = Agent["messages"][number];
+type Skill = Awaited<ReturnType<typeof api.skills.list>>[number];
+type BrowserInput = Parameters<typeof api.agents.browserInput>[0]["input"];
+type AuthState = Awaited<ReturnType<typeof api.auth.state>>;
 
 const avatarStyle = (id: string): string =>
   id === "lead"
-    ? "bg-accent text-zinc-900 rounded-[42%_58%_52%_48%] -rotate-6"
+    ? "bg-brand text-zinc-900 rounded-[42%_58%_52%_48%] -rotate-6"
     : id === "worker"
       ? "bg-emerald-300 text-emerald-950 [clip-path:polygon(50%_0,94%_28%,78%_88%,22%_88%,6%_28%)]"
       : "bg-blue-300 text-blue-950 rounded-[50%_42%_55%_45%] rotate-30";
@@ -157,8 +135,17 @@ function messageKind(message: Message): string {
 }
 
 function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
+  const scroll = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, [agent.id, agent.messages.length]);
+
   return (
-    <section className="min-h-0 overflow-auto px-5 py-7" id="messages">
+    <section
+      className="min-h-0 overflow-auto px-5 py-7"
+      id="messages"
+      ref={scroll}
+    >
       {agent.messages.map((message, index) => {
         const prior = agent.messages[index - 1];
         const dayChanged =
@@ -171,7 +158,7 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
         return (
           <div key={message.id}>
             {dayChanged && (
-              <div className="my-7 flex items-center justify-center gap-2 text-xs text-muted before:h-px before:w-8 before:bg-line after:h-px after:w-8 after:bg-line">
+              <div className="my-7 flex items-center justify-center gap-2 text-xs text-muted-foreground before:h-px before:w-8 before:bg-line after:h-px after:w-8 after:bg-line">
                 {dateLabel(message.createdAt)}
               </div>
             )}
@@ -188,12 +175,12 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
         );
       })}
       {!agent.messages.length && (
-        <div className="grid h-full place-items-center text-sm text-muted">
+        <div className="grid h-full place-items-center text-sm text-muted-foreground">
           Start with a task. Your agent will work in its own thread.
         </div>
       )}
       {agent.status === "running" && (
-        <div className="mt-5 flex items-center gap-2 text-xs text-muted">
+        <div className="mt-5 flex items-center gap-2 text-xs text-muted-foreground">
           <Avatar agent={agent} working />
           <span>
             {agent.name} is working<span className="animate-pulse">...</span>
@@ -207,9 +194,7 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
 function App(): React.ReactNode {
   const [auth, setAuth] = useState<AuthState>();
   const [agents, setAgents] = useState<readonly Agent[]>([]);
-  const [skills, setSkills] = useState<
-    readonly z.infer<typeof SkillsSchema>[number][]
-  >([]);
+  const [skills, setSkills] = useState<readonly Skill[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [prompt, setPrompt] = useState("");
   const [screenUrl, setScreenUrl] = useState("");
@@ -222,21 +207,17 @@ function App(): React.ReactNode {
   );
 
   const refreshAuth = async (): Promise<void> => {
-    const response = await fetch("/api/auth/codex");
-    if (response.ok) setAuth(AuthStateSchema.parse(await response.json()));
+    setAuth(await api.auth.state());
   };
   const login = async (): Promise<void> => {
-    const response = await fetch("/api/auth/codex", { method: "POST" });
-    if (response.ok) setAuth(AuthStateSchema.parse(await response.json()));
+    setAuth(await api.auth.login());
   };
 
   const refresh = async (): Promise<void> => {
-    const response = await fetch("/api/agents");
-    if (response.ok) setAgents(AgentsSchema.parse(await response.json()));
+    setAgents(await api.agents.list());
   };
   const refreshSkills = async (): Promise<void> => {
-    const response = await fetch("/api/skills");
-    if (response.ok) setSkills(SkillsSchema.parse(await response.json()));
+    setSkills(await api.skills.list());
   };
   useEffect(() => {
     void refreshAuth();
@@ -275,18 +256,14 @@ function App(): React.ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [agent?.desktop?.cdpUrl, agent?.id]);
+  }, [agent?.desktop?.viewerUrl, agent?.id]);
 
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
     if (!agent || !prompt.trim() || agent.status === "running") return;
     const text = prompt.trim();
     setPrompt("");
-    await fetch(`/api/agents/${agent.id}/messages`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
+    await api.agents.send({ agentId: agent.id, text });
     await refresh();
   };
   const clear = async (): Promise<void> => {
@@ -295,17 +272,13 @@ function App(): React.ReactNode {
       !window.confirm(`Clear ${agent.name}'s chat and start a fresh thread?`)
     )
       return;
-    await fetch(`/api/agents/${agent.id}/clear`, { method: "POST" });
+    await api.agents.clear({ agentId: agent.id });
     settings.current?.close();
     await refresh();
   };
   const browserInput = async (input: BrowserInput): Promise<void> => {
     if (agent?.desktop)
-      await fetch(`/api/agents/${agent.id}/browser/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
-      });
+      await api.agents.browserInput({ agentId: agent.id, input });
   };
   const point = (
     event: React.PointerEvent | React.WheelEvent,
@@ -327,7 +300,7 @@ function App(): React.ReactNode {
   };
   if (!auth)
     return (
-      <main className="grid h-screen place-items-center bg-app text-muted">
+      <main className="grid h-screen place-items-center bg-app text-muted-foreground">
         Connecting to Pi…
       </main>
     );
@@ -336,19 +309,19 @@ function App(): React.ReactNode {
       <main className="grid h-screen place-items-center bg-app p-6 text-zinc-100">
         <section className="w-full max-w-md rounded-3xl border border-line bg-panel p-8 shadow-2xl">
           <div className="mb-6 flex items-center gap-3 text-xl font-bold">
-            <i className="size-3 rounded-full bg-accent" />
+            <i className="size-3 rounded-full bg-brand" />
             SlopBot
           </div>
           <h1 className="text-2xl font-semibold">
             Connect your Codex subscription
           </h1>
-          <p className="mt-3 text-sm leading-6 text-muted">
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
             Sign in with ChatGPT Plus or Pro before starting the bots.
             Credentials stay in your local SlopBot data volume.
           </p>
           {auth.status === "pending" ? (
             <div className="mt-6 rounded-2xl bg-raised p-5">
-              <div className="text-xs font-semibold tracking-[.08em] text-muted">
+              <div className="text-xs font-semibold tracking-[.08em] text-muted-foreground">
                 DEVICE CODE
               </div>
               <button
@@ -360,27 +333,28 @@ function App(): React.ReactNode {
                 {auth.userCode}
               </button>
               <a
-                className="mt-5 block rounded-xl bg-accent px-4 py-3 text-center font-semibold text-zinc-900"
+                className="mt-5 block rounded-xl bg-brand px-4 py-3 text-center font-semibold text-zinc-900"
                 href={auth.verificationUri}
                 target="_blank"
                 rel="noreferrer"
               >
                 Open OpenAI and sign in
               </a>
-              <p className="mt-3 text-center text-xs text-muted">
+              <p className="mt-3 text-center text-xs text-muted-foreground">
                 SlopBot will continue automatically after approval.
               </p>
             </div>
           ) : (
-            <button
-              className="mt-6 w-full rounded-xl bg-accent px-4 py-3 font-semibold text-zinc-900 disabled:opacity-50"
+            <Button
+              className="mt-6 h-auto w-full rounded-xl bg-brand px-4 py-3 font-semibold text-zinc-900 disabled:opacity-50"
+              variant="ghost"
               disabled={auth.status === "starting"}
               onClick={() => void login()}
             >
               {auth.status === "starting"
                 ? auth.message
                 : "Connect ChatGPT Plus / Pro"}
-            </button>
+            </Button>
           )}
           {auth.status === "error" && (
             <p className="mt-4 text-sm text-red-300">{auth.message}</p>
@@ -390,7 +364,7 @@ function App(): React.ReactNode {
     );
   if (!agent)
     return (
-      <main className="grid h-screen place-items-center bg-app text-muted">
+      <main className="grid h-screen place-items-center bg-app text-muted-foreground">
         Loading agents…
       </main>
     );
@@ -398,10 +372,10 @@ function App(): React.ReactNode {
     <main className="grid h-screen grid-cols-[240px_minmax(460px,1fr)_330px] overflow-hidden bg-app text-zinc-100">
       <aside className="border-r border-line bg-panel p-3">
         <div className="flex items-center gap-2 px-2 py-3 text-base font-bold">
-          <i className="size-2 rounded-full bg-accent" />
+          <i className="size-2 rounded-full bg-brand" />
           SlopBot
         </div>
-        <div className="px-2 pb-2 text-[11px] font-semibold tracking-[.08em] text-muted">
+        <div className="px-2 pb-2 text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
           AGENTS
         </div>
         {agents.map((item) => (
@@ -415,29 +389,29 @@ function App(): React.ReactNode {
               <span className="flex items-center justify-between">
                 <b>{item.name}</b>
                 <i
-                  className={`size-2 rounded-full ${item.status === "running" ? "bg-accent" : item.status === "error" ? "bg-red-400" : "bg-zinc-500"}`}
+                  className={`size-2 rounded-full ${item.status === "running" ? "bg-brand" : item.status === "error" ? "bg-red-400" : "bg-zinc-500"}`}
                 />
               </span>
-              <span className="block truncate text-xs text-muted">
+              <span className="block truncate text-xs text-muted-foreground">
                 {item.role}
               </span>
             </span>
           </button>
         ))}
       </aside>
-      <section className="grid min-w-0 grid-rows-[auto_1fr_auto]">
+      <section className="grid min-h-0 min-w-0 grid-rows-[auto_1fr_auto] overflow-hidden">
         <header className="flex items-center justify-between border-b border-line px-6 py-4">
           <div className="flex items-center gap-3">
             <Avatar agent={agent} />
             <div>
               <b>{agent.name}</b>
-              <div className="text-xs text-muted">
+              <div className="text-xs text-muted-foreground">
                 {agent.id} · {agent.role}
               </div>
             </div>
           </div>
           <button
-            className="text-xs text-muted hover:text-zinc-100"
+            className="text-xs text-muted-foreground hover:text-zinc-100"
             onClick={() => settings.current?.showModal()}
           >
             Settings
@@ -452,19 +426,20 @@ function App(): React.ReactNode {
               onChange={(event) => setPrompt(event.target.value)}
               placeholder="Message agent"
             />
-            <button
-              className="rounded-xl bg-accent px-4 font-semibold text-zinc-900 disabled:opacity-40"
+            <Button
+              className="h-auto rounded-xl bg-brand px-4 font-semibold text-zinc-900 disabled:opacity-40"
               disabled={agent.status === "running"}
+              variant="ghost"
             >
               Send
-            </button>
+            </Button>
           </div>
         </form>
       </section>
       <aside
         className={`flex min-h-0 flex-col border-l border-line bg-panel p-4 ${expanded ? "fixed inset-0 z-10 border-l-0" : ""}`}
       >
-        <div className="pb-2 text-[11px] font-semibold tracking-[.08em] text-muted">
+        <div className="pb-2 text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
           LIVE BROWSER
         </div>
         <img
@@ -472,27 +447,14 @@ function App(): React.ReactNode {
           className={`w-full rounded-xl border border-line bg-zinc-800 object-contain ${expanded ? "min-h-0 flex-1" : "aspect-video"}`}
           src={screenUrl}
           alt={`${agent.name} browser`}
-          onPointerDown={(event) => {
-            const position = point(event);
-            if (!position) return;
-            event.currentTarget.focus();
-            void browserInput({
-              type: "mousePressed",
-              ...position,
-              button: "left",
-              clickCount: 1,
-              modifiers: 0,
-            });
-          }}
           onPointerUp={(event) => {
             const position = point(event);
             if (position)
               void browserInput({
-                type: "mouseReleased",
+                type: "click",
                 ...position,
                 button: "left",
                 clickCount: 1,
-                modifiers: 0,
               });
           }}
           onWheel={(event) => {
@@ -500,22 +462,32 @@ function App(): React.ReactNode {
             if (!position) return;
             event.preventDefault();
             void browserInput({
-              type: "mouseWheel",
-              ...position,
+              type: "scroll",
               deltaX: event.deltaX,
               deltaY: event.deltaY,
-              modifiers: 0,
             });
           }}
         />
-        <div className="flex items-center justify-between pt-2 text-xs text-muted">
+        <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
           <span>{agent.name} browser</span>
-          <button
-            className="text-zinc-100"
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded ? "Exit" : "Expand"}
-          </button>
+          <span className="flex gap-3">
+            {agent.desktop?.viewerUrl && (
+              <a
+                href={agent.desktop.viewerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-zinc-100"
+              >
+                Open login
+              </a>
+            )}
+            <button
+              className="text-zinc-100"
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? "Exit" : "Expand"}
+            </button>
+          </span>
         </div>
       </aside>
       <dialog
@@ -526,24 +498,26 @@ function App(): React.ReactNode {
           <b>Settings</b>
           <button
             onClick={() => settings.current?.close()}
-            className="text-sm text-muted"
+            className="text-sm text-muted-foreground"
           >
             Close
           </button>
         </div>
-        <div className="text-[11px] font-semibold tracking-[.08em] text-muted">
+        <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
           ENABLED PI SKILLS
         </div>
         <div className="mt-2 grid max-h-60 gap-2 overflow-auto">
           {skills.map((skill) => (
             <div className="rounded-xl bg-zinc-800 p-3" key={skill.name}>
               <b className="text-xs">${skill.name}</b>
-              <p className="mt-1 text-xs text-muted">{skill.description}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {skill.description}
+              </p>
             </div>
           ))}
         </div>
         <div className="mt-5 flex items-center justify-between border-t border-line pt-4">
-          <small className="max-w-48 text-muted">
+          <small className="max-w-48 text-muted-foreground">
             Clear this agent’s visible chat and start a fresh thread.
           </small>
           <button
@@ -559,4 +533,20 @@ function App(): React.ReactNode {
   );
 }
 
-createRoot(document.querySelector("#root")!).render(<App />);
+const rootRoute = createRootRoute({ component: () => <Outlet /> });
+const indexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/",
+  component: App,
+});
+const router = createRouter({ routeTree: rootRoute.addChildren([indexRoute]) });
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}
+
+createRoot(document.querySelector("#root")!).render(
+  <RouterProvider router={router} />,
+);
