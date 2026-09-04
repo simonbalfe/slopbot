@@ -2,6 +2,7 @@
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "exactOptionalPropertyTypes": true,
+    "jsx": "react-jsx",
     "lib": ["ES2023", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
@@ -16,8 +17,8 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2023",
-    "types": ["bun-types"],
+    "types": ["bun-types", "vite/client"],
     "verbatimModuleSyntax": true
   },
-  "include": ["server.ts", "src/**/*.ts"]
+  "include": ["desktop/**/*.ts", "server.ts", "src/**/*.ts", "web/**/*.tsx", "vite.config.ts"]
 }

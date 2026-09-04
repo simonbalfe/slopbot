@@ -1,0 +1,30 @@
+services:
+  openbot:
+    build: .
+    container_name: openbot
+    init: true
+    restart: unless-stopped
+    environment:
+      OPENBOT_HOST: 0.0.0.0
+      OPENBOT_WORKSPACE: /workspace
+      OPENBOT_DATA_DIR: /data
+      OPENBOT_LOCAL_COMPUTER_URL: http://100.101.71.18:4318
+      OPENBOT_X11_DISPLAY: :99
+      OPENBOT_X11_SCREENS: 2
+      OPENBOT_X11_GEOMETRY: 1920x1080x24
+      OPENBOT_X11_VIEWER_BASE_URL: http://100.68.65.17
+    ports:
+      - 100.68.65.17:4317:4317
+      - 100.68.65.17:6080-6081:6080-6081
+    security_opt:
+      - seccomp=unconfined
+    shm_size: 1gb
+    volumes:
+      - ./codex:/codex
+      - ./data:/data
+      - ./workspace:/workspace
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:4317/api/agents"]
+      interval: 10s
+      timeout: 3s
+      retries: 6

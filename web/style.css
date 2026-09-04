@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-app: #0b0b0c;
+  --color-panel: #101011;
+  --color-raised: #1c1c1e;
+  --color-line: #2b2b2e;
+  --color-muted: #939398;
+  --color-accent: #ffb247;
+}
+
+@keyframes float {
+  50% { transform: translateY(-6px) rotate(5deg); }
+}
+
+@keyframes pop {
+  from { opacity: 0; transform: scale(.5); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .agent-working { animation: pop .22s ease-out, float 1.4s ease-in-out .22s infinite; }
+}

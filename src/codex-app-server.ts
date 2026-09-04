@@ -7,6 +7,7 @@ import { errorMessage, JsonObjectSchema, JsonRpcMessageSchema } from "./protocol
 import type { JsonObject } from "./protocol.ts";
 
 export const ThreadIdSchema = z.string().min(1).brand<"ThreadId">();
+export const TurnIdSchema = z.string().min(1).brand<"TurnId">();
 export const SandboxModeSchema = z.enum(["read-only", "workspace-write", "danger-full-access"]);
 export const ApprovalPolicySchema = z.enum(["untrusted", "on-failure", "on-request", "never"]);
 export const TextInputSchema = z.object({
@@ -49,8 +50,13 @@ const RawSkillSchema = z.object({
 const SkillGroupSchema = z.object({ cwd: z.string(), skills: z.array(RawSkillSchema) });
 const SkillListResultSchema = z.object({ data: z.array(SkillGroupSchema) });
 const ThreadStartResultSchema = z.object({ thread: z.object({ id: ThreadIdSchema }) });
+const ThreadReadResultSchema = z.object({
+  thread: z.object({ id: ThreadIdSchema, turns: z.array(z.unknown()).default([]) }),
+});
+const TurnStartResultSchema = z.object({ turn: z.object({ id: TurnIdSchema }) });
 
 export type ThreadId = z.infer<typeof ThreadIdSchema>;
+export type TurnId = z.infer<typeof TurnIdSchema>;
 export type SandboxMode = z.infer<typeof SandboxModeSchema>;
 export type ApprovalPolicy = z.infer<typeof ApprovalPolicySchema>;
 
@@ -135,11 +141,27 @@ export class CodexAppServer {
     return ThreadStartResultSchema.parse(await this.request("thread/start", ThreadOptionsSchema.parse(options))).thread.id;
   }
 
-  async startTurn(threadId: ThreadId, input: readonly TurnInput[]): Promise<void> {
-    await this.request("turn/start", {
+  async resumeThread(threadId: ThreadId, options: ThreadOptions): Promise<ThreadId> {
+    return ThreadStartResultSchema.parse(await this.request("thread/resume", {
+      threadId: ThreadIdSchema.parse(threadId),
+      ...ThreadOptionsSchema.parse(options),
+    })).thread.id;
+  }
+
+  async threadContainsText(threadId: ThreadId, text: string): Promise<boolean> {
+    const result = await this.request("thread/read", {
+      threadId: ThreadIdSchema.parse(threadId),
+      includeTurns: true,
+    });
+    return JSON.stringify(ThreadReadResultSchema.parse(result).thread.turns).includes(text);
+  }
+
+  async startTurn(threadId: ThreadId, input: readonly TurnInput[]): Promise<TurnId> {
+    const result = await this.request("turn/start", {
       threadId: ThreadIdSchema.parse(threadId),
       input: z.array(TurnInputSchema).min(1).parse(input),
     });
+    return TurnStartResultSchema.parse(result).turn.id;
   }
 
   private request(method: string, params: JsonObject): Promise<unknown> {

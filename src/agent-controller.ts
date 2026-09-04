@@ -1,20 +1,51 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
+import { AgentStore } from "./agent-store.ts";
+import type { StoredAgent } from "./agent-store.ts";
+import {
+  AgentIdSchema,
+  AgentProfileSchema,
+  createAgentId,
+} from "./agent-types.ts";
+import type {
+  AgentId,
+  AgentProfile,
+  AgentStatus,
+  AgentView,
+  DesktopAssignment,
+  MessageEnvelope,
+} from "./agent-types.ts";
+import { BrowserCdp, BrowserCdpArgumentsSchema, BrowserCdpInputSchema } from "./browser-cdp.ts";
 import { CodexAppServer } from "./codex-app-server.ts";
-import { SandboxModeSchema } from "./codex-app-server.ts";
-import type { AppServerNotification, DynamicTool, SandboxMode, Skill, ThreadId, TurnInput } from "./codex-app-server.ts";
+import type {
+  AppServerNotification,
+  DynamicTool,
+  SandboxMode,
+  Skill,
+  ThreadId,
+  ThreadOptions,
+  TurnInput,
+} from "./codex-app-server.ts";
+import { LocalComputerClient, LocalComputerOperationSchema } from "./local-computer.ts";
 import { errorMessage, textSchema } from "./protocol.ts";
 import type { JsonObject } from "./protocol.ts";
+import { SharedComputer, SharedComputerOptionsSchema } from "./shared-computer.ts";
 
-export const AgentIdSchema = textSchema(100).brand<"AgentId">();
-export const AgentProfileSchema = z.object({
-  id: AgentIdSchema,
-  name: textSchema(50),
-  aliases: z.array(textSchema(50)).min(1),
-  role: textSchema(200),
-  sandbox: SandboxModeSchema,
-  instructions: textSchema(2_000),
+export const AgentControllerOptionsSchema = z.object({
+  cwd: z.string().min(1),
+  databasePath: z.string().min(1),
+  computer: SharedComputerOptionsSchema.optional(),
+  localComputerUrl: z.url().optional(),
+});
+const UserMessageSchema = z.object({
+  agentId: AgentIdSchema,
+  text: textSchema(8_000),
+  skillName: textSchema(100).nullish(),
+});
+const PassReplySchema = z.object({
+  senderId: AgentIdSchema,
+  recipientId: AgentIdSchema,
 });
 const ToolRequestSchema = z.object({
   tool: z.string(),
@@ -25,54 +56,26 @@ const SendToAgentArgumentsSchema = z.object({
   target: textSchema(50),
   message: textSchema(8_000),
 });
+const LocalComputerArgumentsSchema = z.object({ path: textSchema(4_096) });
 const AgentMessageDeltaSchema = z.object({ threadId: z.string(), delta: z.string() });
 const TurnCompletedSchema = z.object({
   threadId: z.string(),
   turn: z.object({ status: z.string() }),
 });
 
-export type AgentId = z.infer<typeof AgentIdSchema>;
-export type AgentStatus = "idle" | "running" | "error";
-export type AgentProfile = Readonly<z.infer<typeof AgentProfileSchema>>;
+export type AgentControllerOptions = Readonly<z.infer<typeof AgentControllerOptionsSchema>>;
+export type AgentControllerErrorCode = "agent-not-found" | "skill-not-found" | "no-reply" | "agent-running" | "browser-unavailable";
 
-export type AgentMessage = Readonly<{
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-}>;
-
-export type AgentView = Readonly<{
-  id: AgentId;
-  name: string;
-  role: string;
-  sandbox: SandboxMode;
+type Agent = Readonly<{
+  profile: AgentProfile;
   threadId: ThreadId;
-  messages: readonly AgentMessage[];
-  status: AgentStatus;
-}>;
-
-type Task = Readonly<{
-  text: string;
-  skill: Skill | undefined;
-}>;
-
-type Agent = AgentProfile & {
-  readonly threadId: ThreadId;
-  readonly messages: AgentMessage[];
-  readonly queue: Task[];
-  status: AgentStatus;
-};
-
-export type AgentControllerErrorCode = "agent-not-found" | "skill-not-found" | "no-reply";
+  desktop: DesktopAssignment | null;
+}> & { status: AgentStatus };
 
 export class AgentControllerError extends Error {
   constructor(readonly code: AgentControllerErrorCode, message: string) {
     super(message);
   }
-}
-
-export function createAgentId(value: string): AgentId {
-  return AgentIdSchema.parse(value);
 }
 
 export const defaultAgentProfiles = [
@@ -82,53 +85,74 @@ export const defaultAgentProfiles = [
     aliases: ["lead", "manager"],
     role: "Routes work and owns the final answer",
     sandbox: "read-only",
-    instructions: "Own intake, decomposition, delegation, and synthesis. Send evidence work to RESEARCH, implementation to BUILD, verification to REVIEW, and runtime or CLI operations to OPS. Report only results that teammates actually return.",
+    instructions: "Own intake, delegation, and synthesis. Send execution to WORKER and report only results the worker actually returns.",
   },
   {
-    id: createAgentId("research"),
-    name: "RESEARCH",
-    aliases: ["research", "researcher"],
-    role: "Finds repository-grounded evidence",
-    sandbox: "read-only",
-    instructions: "Gather facts from primary sources and the live repository. Separate evidence from inference. Return compact handoffs containing goal, state, evidence, constraints, and next action. Do not implement unless explicitly asked.",
-  },
-  {
-    id: createAgentId("build"),
-    name: "BUILD",
-    aliases: ["build", "builder"],
-    role: "Implements the smallest working change",
+    id: createAgentId("worker"),
+    name: "WORKER",
+    aliases: ["worker", "researcher", "builder", "reviewer", "ops"],
+    role: "Researches, builds, reviews, and operates",
     sandbox: "workspace-write",
-    instructions: "Inspect the real flow, implement the smallest root-cause change, and verify it. Preserve unrelated work. Send completed changes and test evidence to REVIEW, then report the result to LEAD.",
-  },
-  {
-    id: createAgentId("review"),
-    name: "REVIEW",
-    aliases: ["review", "reviewer"],
-    role: "Independently tests and challenges work",
-    sandbox: "read-only",
-    instructions: "Review source and behavior independently. Prioritize correctness, regressions, security, and missing tests. Do not edit unless explicitly asked. Send actionable findings to BUILD and a clear verdict to LEAD.",
-  },
-  {
-    id: createAgentId("ops"),
-    name: "OPS",
-    aliases: ["ops", "operations"],
-    role: "Runs services and operational CLI workflows",
-    sandbox: "workspace-write",
-    instructions: "Operate and diagnose services with the relevant skill and CLI. Prefer read-only checks. Perform external or destructive actions only when the user explicitly requested them. Report commands, evidence, and outcomes to LEAD.",
+    instructions: "Inspect the real flow, gather evidence, implement the smallest root-cause change, and verify it. Preserve unrelated work. Use the assigned browser and relevant skills or CLI tools when needed. Send material results and remaining risks to LEAD.",
   },
 ] satisfies readonly AgentProfile[];
+
+const retiredDefaultAgentIds = ["research", "build", "review", "ops"].map(createAgentId);
 
 const sendToAgentTool = {
   type: "function",
   name: "send_to_agent",
-  description: "Send an asynchronous message to another agent when the user asks to tell, pass, delegate, or share something.",
+  description: "Queue an asynchronous message to another agent and return a delivery acknowledgement with a stable message ID.",
   inputSchema: {
     type: "object",
     properties: {
-      target: { type: "string", description: "Target agent name" },
+      target: { type: "string", description: "Target agent ID or name" },
       message: { type: "string", description: "Concise message or handoff" },
     },
     required: ["target", "message"],
+    additionalProperties: false,
+  },
+} satisfies DynamicTool;
+
+const localComputerTools = [
+  {
+    type: "function",
+    name: "local_read_file",
+    description: "Ask the user for permission to read one text file from their Mac.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path or path relative to the user's home directory" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "local_list_directory",
+    description: "Ask the user for permission to list one directory on their Mac.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Absolute path or path relative to the user's home directory" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  },
+] satisfies readonly DynamicTool[];
+
+const browserCdpTool = {
+  type: "function",
+  name: "browser_cdp",
+  description: "Control only your assigned Chromium browser with CDP. Navigate, inspect visible text, click a CSS selector, type into a selector, or evaluate page JavaScript.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["navigate", "snapshot", "click", "type", "evaluate"] },
+      url: { type: "string" },
+      selector: { type: "string" },
+      text: { type: "string" },
+      expression: { type: "string" },
+    },
+    required: ["action"],
     additionalProperties: false,
   },
 } satisfies DynamicTool;
@@ -143,16 +167,55 @@ function toolResult(text: string, success: boolean): JsonObject {
 
 export class AgentController {
   private readonly agents = new Map<AgentId, Agent>();
+  private readonly activeAgentIds = new Set<AgentId>();
+  private readonly computer: SharedComputer | undefined;
+  private readonly localComputer: LocalComputerClient | undefined;
+  private readonly options: AgentControllerOptions;
+  private readonly store: AgentStore;
   private skills: readonly Skill[] = [];
 
-  constructor(private readonly client: CodexAppServer, private readonly cwd: string) {}
+  constructor(private readonly client: CodexAppServer, options: AgentControllerOptions) {
+    this.options = AgentControllerOptionsSchema.parse(options);
+    this.store = new AgentStore(this.options.databasePath);
+    this.computer = this.options.computer ? new SharedComputer(this.options.computer) : undefined;
+    this.localComputer = this.options.localComputerUrl
+      ? new LocalComputerClient({ url: this.options.localComputerUrl })
+      : undefined;
+  }
 
   async initialize(profiles: readonly AgentProfile[] = defaultAgentProfiles): Promise<void> {
-    this.client.handleRequests((request) => this.handleServerRequest(request));
-    this.client.onNotification((notification) => this.handleNotification(notification));
-    await this.client.connect();
-    await this.reloadSkills(true);
-    for (const profile of profiles) await this.createAgent(profile);
+    await this.computer?.start();
+    try {
+      this.client.handleRequests((request) => this.handleServerRequest(request));
+      this.client.onNotification((notification) => this.handleNotification(notification));
+      await this.client.connect();
+      await this.reloadSkills(true);
+      this.store.upsertProfiles(profiles);
+      this.store.releaseDesktops(retiredDefaultAgentIds);
+
+      const profileIds = new Set(profiles.map((profile) => profile.id));
+      const storedAgents = [
+        ...profiles.flatMap((profile) => {
+          const stored = this.store.getAgent(profile.id);
+          return stored ? [stored] : [];
+        }),
+        ...this.store.listAgents().filter(({ profile }) => (
+          !profileIds.has(profile.id) && !retiredDefaultAgentIds.includes(profile.id)
+        )),
+      ];
+      for (const { profile } of storedAgents) this.activeAgentIds.add(profile.id);
+      for (const stored of storedAgents) await this.loadAgent(stored);
+      await this.recoverPendingMessages();
+      for (const agent of this.agents.values()) this.schedule(agent);
+    } catch (error) {
+      this.computer?.close();
+      throw error;
+    }
+  }
+
+  close(): void {
+    this.computer?.close();
+    this.store.close();
   }
 
   listAgents(): readonly AgentView[] {
@@ -164,54 +227,168 @@ export class AgentController {
   }
 
   async createAgent(profile: AgentProfile): Promise<AgentView> {
-    const validatedProfile = AgentProfileSchema.parse(profile);
-    if (this.agents.has(validatedProfile.id)) throw new Error(`Agent already exists: ${validatedProfile.id}`);
-    const threadId = await this.client.startThread({
-      cwd: this.cwd,
-      approvalPolicy: "never",
-      sandbox: validatedProfile.sandbox,
-      serviceName: "openbot",
-      developerInstructions: this.instructionsFor(validatedProfile),
-      dynamicTools: [sendToAgentTool],
-    });
-    const agent: Agent = { ...validatedProfile, threadId, messages: [], queue: [], status: "idle" };
-    this.agents.set(agent.id, agent);
+    const validated = AgentProfileSchema.parse(profile);
+    if (this.agents.has(validated.id) || this.store.getAgent(validated.id)) {
+      throw new Error(`Agent already exists: ${validated.id}`);
+    }
+    this.store.upsertProfiles([validated]);
+    const desktop = this.assignDesktop(validated.id);
+    const options = this.threadOptions(validated, desktop);
+    const threadConfig = this.threadConfig(options);
+    const threadId = await this.client.startThread(options);
+    this.store.saveAgent(validated, threadId, threadConfig);
+    const agent = { profile: validated, threadId, desktop, status: "idle" } satisfies Agent;
+    this.agents.set(validated.id, agent);
+    this.activeAgentIds.add(validated.id);
     return this.view(agent);
   }
 
-  sendMessage(rawAgentId: string, text: string, skillName?: string): void {
-    const agent = this.findAgent(rawAgentId);
-    if (!agent) throw new AgentControllerError("agent-not-found", "Agent not found");
-    const skill = skillName ? this.skills.find((item) => item.name === skillName) : undefined;
-    if (skillName && !skill) throw new AgentControllerError("skill-not-found", "Skill not found");
-    this.enqueue(agent, text, skill);
+  sendMessage(rawAgentId: string, text: string, skillName?: string): MessageEnvelope {
+    const parsed = UserMessageSchema.parse({ agentId: rawAgentId, text, skillName });
+    const agent = this.agent(parsed.agentId);
+    const skill = parsed.skillName ? this.skills.find((item) => item.name === parsed.skillName) : undefined;
+    if (parsed.skillName && !skill) throw new AgentControllerError("skill-not-found", "Skill not found");
+    const message = this.store.queueMessage({
+      senderId: null,
+      recipientId: agent.profile.id,
+      text: parsed.text,
+      skillName: parsed.skillName ?? null,
+    });
+    this.schedule(agent);
+    return message;
   }
 
-  passReply(rawSenderId: string, rawRecipientId: string): void {
-    const sender = this.findAgent(rawSenderId);
-    const recipient = this.findAgent(rawRecipientId);
-    if (!sender || !recipient) throw new AgentControllerError("agent-not-found", "Agent not found");
-    const reply = sender.messages.findLast((message) => message.role === "assistant");
+  passReply(rawSenderId: string, rawRecipientId: string): MessageEnvelope {
+    const { recipientId, senderId } = PassReplySchema.parse({
+      senderId: rawSenderId,
+      recipientId: rawRecipientId,
+    });
+    const sender = this.agent(senderId);
+    const recipient = this.agent(recipientId);
+    const reply = this.store.lastAssistantMessage(sender.profile.id);
     if (!reply) throw new AgentControllerError("no-reply", "There is no reply to pass");
-    this.enqueue(recipient, `Handoff from ${sender.name} (${sender.role}):\n\n${reply.text}`);
+    return this.sendAgentMessage(sender, recipient, reply.text);
   }
 
-  private instructionsFor(profile: AgentProfile): string {
-    return `You are ${profile.name}. ${profile.role}. ${profile.instructions} The team is LEAD, RESEARCH, BUILD, REVIEW, and OPS. Your transcript is private. Share only deliberate handoffs. When a skill is attached, follow its SKILL.md and use Codex's native shell tool for any CLI it requires. Never claim a command ran without tool output. When asked to tell, pass, delegate, or share something with another agent, call send_to_agent. A send is fire-and-forget: acknowledge delivery but never invent the recipient's reply or poll for it. Use send_to_agent for material replies to teammate messages, but do not create acknowledgement loops.`;
+  async clearChat(rawAgentId: string): Promise<AgentView> {
+    const agent = this.agent(AgentIdSchema.parse(rawAgentId));
+    if (agent.status === "running") {
+      throw new AgentControllerError("agent-running", "Wait for the agent to finish before clearing its chat");
+    }
+    const options = this.threadOptions(agent.profile, agent.desktop);
+    const threadId = await this.client.startThread(options);
+    const updated = { ...agent, threadId } satisfies Agent;
+    this.store.clearAgentChat(agent.profile.id);
+    this.store.setThread(agent.profile.id, threadId, this.threadConfig(options));
+    this.agents.set(agent.profile.id, updated);
+    return this.view(updated);
   }
 
-  private view({ id, name, role, sandbox, threadId, messages, status }: Agent): AgentView {
-    return { id, name, role, sandbox, threadId, messages, status };
+  async browserScreenshot(rawAgentId: string): Promise<Uint8Array> {
+    return this.browser(rawAgentId).screenshot();
   }
 
-  private async reloadSkills(forceReload: boolean): Promise<void> {
-    this.skills = (await this.client.listSkills([this.cwd], forceReload))
-      .filter((skill) => skill.enabled)
-      .sort((left, right) => left.name.localeCompare(right.name));
+  async browserInput(rawAgentId: string, input: unknown): Promise<void> {
+    return this.browser(rawAgentId).input(BrowserCdpInputSchema.parse(input));
   }
 
-  private findAgent(rawAgentId: string): Agent | undefined {
-    return [...this.agents.values()].find((agent) => agent.id === rawAgentId);
+  private async loadAgent(stored: StoredAgent): Promise<void> {
+    const desktop = this.assignDesktop(stored.profile.id);
+    const options = this.threadOptions(stored.profile, desktop);
+    const threadConfig = this.threadConfig(options);
+    let threadId = stored.threadId;
+    if (stored.threadConfig !== threadConfig) threadId = null;
+    if (threadId && stored.threadConfig === threadConfig) {
+      try {
+        threadId = await this.client.resumeThread(threadId, options);
+      } catch (error) {
+        console.warn(`Could not resume ${stored.profile.id}: ${errorMessage(error)}`);
+        threadId = null;
+      }
+    }
+    if (!threadId) {
+      threadId = await this.client.startThread(options);
+      this.store.setThread(stored.profile.id, threadId, threadConfig);
+    }
+    this.agents.set(stored.profile.id, { profile: stored.profile, threadId, desktop, status: "idle" });
+  }
+
+  private threadOptions(profile: AgentProfile, desktop: DesktopAssignment | null): ThreadOptions {
+    return {
+      cwd: this.options.cwd,
+      approvalPolicy: "never",
+      sandbox: this.sandboxFor(profile),
+      serviceName: "openbot",
+      developerInstructions: this.instructionsFor(profile, desktop),
+      dynamicTools: [sendToAgentTool, ...(desktop ? [browserCdpTool] : []), ...(this.localComputer ? localComputerTools : [])],
+    };
+  }
+
+  private async recoverPendingMessages(): Promise<void> {
+    for (const message of this.store.listProcessingMessages()) {
+      const recipient = this.agents.get(message.recipientId);
+      if (!recipient) {
+        this.store.markFailed(message.id);
+        continue;
+      }
+      if (await this.client.threadContainsText(recipient.threadId, message.id)) {
+        this.store.markDelivered(message.id, null);
+      } else {
+        this.store.requeueMessage(message.id);
+      }
+    }
+  }
+
+  private instructionsFor(profile: AgentProfile, desktop: DesktopAssignment | null): string {
+    const roster = this.store.listAgents()
+      .filter(({ profile: teammate }) => this.activeAgentIds.has(teammate.id))
+      .map(({ profile: teammate }) => `${teammate.name} (${teammate.id})`)
+      .join(", ");
+    const computer = desktop ? ` You share one virtual computer with the team. Your private X11 screen is ${desktop.display}, with a persistent Chromium profile at ${desktop.browserProfile}. Control that browser only with browser_cdp. Do not use xdotool or another agent's browser.` : "";
+    const localComputer = this.localComputer ? " Use local_read_file and local_list_directory only when the task needs data from the user's Mac. Each call requires the user's explicit approval." : "";
+    return `You are ${profile.name} with stable agent ID ${profile.id}. ${profile.role}. ${profile.instructions} The team is ${roster}.${computer}${localComputer} Your transcript is private. Share only deliberate handoffs. When a skill is attached, follow its SKILL.md and use Codex's native shell tool for any CLI it requires. Never claim a command ran without tool output. For OpenBot teammates, use only send_to_agent, never collaboration tools or live agent paths. A send queues a durable message and immediately returns its message ID, never the recipient's reply. Do not poll, invent replies, or send receipt-only acknowledgements.`;
+  }
+
+  private view(agent: Agent): AgentView {
+    return {
+      id: agent.profile.id,
+      name: agent.profile.name,
+      role: agent.profile.role,
+      sandbox: this.sandboxFor(agent.profile),
+      threadId: agent.threadId,
+      desktop: agent.desktop,
+      messages: [...this.store.listMessages(agent.profile.id)],
+      status: agent.status,
+    };
+  }
+
+  private threadConfig(options: ThreadOptions): string {
+    return createHash("sha256").update(JSON.stringify(options)).digest("hex");
+  }
+
+  private agent(agentId: AgentId): Agent {
+    const agent = this.agents.get(agentId);
+    if (!agent) throw new AgentControllerError("agent-not-found", "Agent not found");
+    return agent;
+  }
+
+  private browser(rawAgentId: string): BrowserCdp {
+    const agent = this.agent(AgentIdSchema.parse(rawAgentId));
+    if (!agent.desktop) throw new AgentControllerError("browser-unavailable", "Browser access is unavailable");
+    return new BrowserCdp(agent.desktop.cdpUrl);
+  }
+
+  private sandboxFor(profile: AgentProfile): SandboxMode {
+    // ponytail: the container is the sandbox; add per-agent containers when filesystem isolation is required.
+    return this.computer ? "danger-full-access" : profile.sandbox;
+  }
+
+  private assignDesktop(agentId: AgentId): DesktopAssignment | null {
+    if (!this.computer) return null;
+    const screen = this.store.assignDesktop(agentId, this.computer.screenCount);
+    const desktop = this.computer.assignment(agentId, screen);
+    this.computer.openDesktop(desktop);
+    return desktop;
   }
 
   private agentByThread(threadId: string): Agent | undefined {
@@ -220,34 +397,52 @@ export class AgentController {
 
   private agentByName(target: string, sender: Agent): Agent | undefined {
     const wanted = normalizeAgentName(target);
-    return [...this.agents.values()].find(
-      (agent) => agent.id !== sender.id && agent.aliases.some((alias) => normalizeAgentName(alias) === wanted),
-    );
+    return [...this.agents.values()].find((agent) => (
+      agent.profile.id !== sender.profile.id
+      && (agent.profile.id === target || agent.profile.aliases.some((alias) => normalizeAgentName(alias) === wanted))
+    ));
   }
 
-  private enqueue(agent: Agent, text: string, skill?: Skill): void {
-    agent.messages.push({ id: randomUUID(), role: "user", text: skill ? `$${skill.name}\n${text}` : text });
-    agent.queue.push({ text, skill });
-    void this.runNext(agent);
+  private sendAgentMessage(sender: Agent, recipient: Agent, text: string): MessageEnvelope {
+    const message = this.store.queueMessage({
+      senderId: sender.profile.id,
+      recipientId: recipient.profile.id,
+      text,
+      skillName: null,
+    });
+    this.schedule(recipient);
+    return message;
+  }
+
+  private schedule(agent: Agent): void {
+    queueMicrotask(() => void this.runNext(agent));
   }
 
   private async runNext(agent: Agent): Promise<void> {
     if (agent.status === "running") return;
-    const task = agent.queue.shift();
-    if (!task) return;
+    const message = this.store.claimNextMessage(agent.profile.id);
+    if (!message) return;
 
     agent.status = "running";
     try {
+      const skill = message.skillName ? this.skills.find((item) => item.name === message.skillName) : undefined;
+      if (message.skillName && !skill) throw new AgentControllerError("skill-not-found", `Skill not found: ${message.skillName}`);
+      const sender = message.senderId ? this.agent(message.senderId) : undefined;
+      const text = sender
+        ? `OpenBot message ${message.id} from ${sender.profile.name} (${sender.profile.id}):\n\n${message.text}\n\nAct on this message. Reply with send_to_agent only when you have a material result. Do not send a receipt acknowledgement.`
+        : `OpenBot user message ${message.id}:\n\n${message.text}`;
       const input: TurnInput[] = [{
         type: "text",
-        text: task.skill ? `$${task.skill.name} ${task.text}` : task.text,
+        text: skill ? `$${skill.name} ${text}` : text,
         text_elements: [],
       }];
-      if (task.skill) input.push({ type: "skill", name: task.skill.name, path: task.skill.path });
-      await this.client.startTurn(agent.threadId, input);
+      if (skill) input.push({ type: "skill", name: skill.name, path: skill.path });
+      const turnId = await this.client.startTurn(agent.threadId, input);
+      this.store.markDelivered(message.id, turnId);
     } catch (error) {
+      this.store.markFailed(message.id);
+      this.store.addAssistantMessage(agent.profile.id, `Error: ${errorMessage(error)}`);
       agent.status = "error";
-      agent.messages.push({ id: randomUUID(), role: "assistant", text: `Error: ${errorMessage(error)}` });
     }
   }
 
@@ -255,22 +450,55 @@ export class AgentController {
     if (request.method !== "item/tool/call") throw new Error(`Unsupported server request: ${request.method}`);
     const parsedRequest = ToolRequestSchema.safeParse(request.params);
     if (!parsedRequest.success) return toolResult("Invalid tool request", false);
-    if (parsedRequest.data.tool !== "send_to_agent") return toolResult("Unknown tool", false);
-    const parsedArguments = SendToAgentArgumentsSchema.safeParse(parsedRequest.data.arguments);
-    if (!parsedArguments.success) return toolResult("target and message are required", false);
-
     const sender = this.agentByThread(parsedRequest.data.threadId);
     if (!sender) return toolResult("Sender agent not found", false);
-    const { message: text, target } = parsedArguments.data;
-
-    const recipient = this.agentByName(target, sender);
+    if (parsedRequest.data.tool === "browser_cdp") {
+      return this.handleBrowserCdpRequest(sender, parsedRequest.data.arguments);
+    }
+    if (parsedRequest.data.tool !== "send_to_agent") {
+      return this.handleLocalComputerRequest(sender, parsedRequest.data.tool, parsedRequest.data.arguments);
+    }
+    const parsedArguments = SendToAgentArgumentsSchema.safeParse(parsedRequest.data.arguments);
+    if (!parsedArguments.success) return toolResult("target and message are required", false);
+    const recipient = this.agentByName(parsedArguments.data.target, sender);
     if (!recipient) {
-      const available = [...this.agents.values()].filter((agent) => agent.id !== sender.id).map((agent) => agent.name).join(", ");
+      const available = [...this.agents.values()]
+        .filter((agent) => agent.profile.id !== sender.profile.id)
+        .map((agent) => `${agent.profile.name} (${agent.profile.id})`)
+        .join(", ");
       return toolResult(`Agent not found. Available agents: ${available}`, false);
     }
 
-    this.enqueue(recipient, `Teammate message from ${sender.name} (${sender.role}):\n\n${text}\n\nAct on this message. If ${sender.name} needs a material result, use send_to_agent to return it. Do not send receipt-only acknowledgements.`);
-    return toolResult(`Delivered to ${recipient.name}. The recipient was queued and will run independently.`, true);
+    const message = this.sendAgentMessage(sender, recipient, parsedArguments.data.message);
+    return toolResult(`Queued message ${message.id} for ${recipient.profile.name} (${recipient.profile.id}).`, true);
+  }
+
+  private async handleBrowserCdpRequest(agent: Agent, rawArguments: unknown): Promise<JsonObject> {
+    if (!agent.desktop) return toolResult("Browser access is unavailable", false);
+    const parsedArguments = BrowserCdpArgumentsSchema.safeParse(rawArguments);
+    if (!parsedArguments.success) return toolResult("Invalid browser_cdp request", false);
+    try {
+      return toolResult(await new BrowserCdp(agent.desktop.cdpUrl).execute(parsedArguments.data), true);
+    } catch (error) {
+      return toolResult(errorMessage(error), false);
+    }
+  }
+
+  private async handleLocalComputerRequest(agent: Agent, tool: string, rawArguments: unknown): Promise<JsonObject> {
+    if (!this.localComputer) return toolResult("Local computer access is unavailable", false);
+    const parsedArguments = LocalComputerArgumentsSchema.safeParse(rawArguments);
+    if (!parsedArguments.success) return toolResult("path is required", false);
+    const operation = LocalComputerOperationSchema.safeParse({
+      tool: tool === "local_read_file" ? "read_file" : tool === "local_list_directory" ? "list_directory" : tool,
+      path: parsedArguments.data.path,
+    });
+    if (!operation.success) return toolResult("Unknown tool", false);
+    const result = await this.localComputer.execute({
+      agentId: agent.profile.id,
+      agentName: agent.profile.name,
+      operation: operation.data,
+    });
+    return result.success ? toolResult(result.output, true) : toolResult(result.error, false);
   }
 
   private handleNotification(notification: AppServerNotification): void {
@@ -284,10 +512,9 @@ export class AgentController {
       if (!parsed.success) return;
       const agent = this.agentByThread(parsed.data.threadId);
       if (!agent) return;
-      const { delta } = parsed.data;
-      const last = agent.messages.at(-1);
-      if (last?.role === "assistant") agent.messages[agent.messages.length - 1] = { ...last, text: last.text + delta };
-      else agent.messages.push({ id: randomUUID(), role: "assistant", text: delta });
+      const last = this.store.lastMessage(agent.profile.id);
+      if (last?.role === "assistant") this.store.updateMessageText(last.id, last.text + parsed.data.delta);
+      else this.store.addAssistantMessage(agent.profile.id, parsed.data.delta);
       return;
     }
 
@@ -297,9 +524,13 @@ export class AgentController {
       const agent = this.agentByThread(parsed.data.threadId);
       if (!agent) return;
       agent.status = parsed.data.turn.status === "completed" ? "idle" : "error";
-      void this.runNext(agent);
+      this.schedule(agent);
     }
   }
-}
 
-// ponytail: agent state resets on restart; add SQLite when durable coordination is actually needed.
+  private async reloadSkills(forceReload: boolean): Promise<void> {
+    this.skills = (await this.client.listSkills([this.options.cwd], forceReload))
+      .filter((skill) => skill.enabled)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+}
