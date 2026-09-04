@@ -6,16 +6,23 @@ SlopBot is a minimal two-agent web app. LEAD coordinates work, WORKER executes i
 
 ```mermaid
 flowchart LR
-  UI["Vite + React<br/>TanStack Router + Tailwind"] --> API["Hono + oRPC"]
-  API --> Core["Agent controller"]
-  Core <--> Store[("SQLite queue and transcripts")]
-  Core --> Lead["LEAD<br/>Pi session"]
-  Core --> Worker["WORKER<br/>Pi session"]
-  Lead & Worker --> Codex["OpenAI Codex subscription"]
-  Lead --> LeadBrowser["LEAD browser runtime"]
-  Worker --> WorkerBrowser["WORKER browser runtime"]
-  LeadBrowser & WorkerBrowser --> Workspace[("Shared workspace")]
+  subgraph App["One SlopBot container"]
+    UI["Vite + React"] --> API["Hono + oRPC"]
+    API --> Core["Agent controller"]
+    Core <--> Store[("SQLite queue and transcripts")]
+    Core --> Pi["One shared Pi runtime"]
+    Pi --> Lead["LEAD session"]
+    Pi --> Worker["WORKER session"]
+    Pi --> More["Additional bot sessions"]
+  end
+  Pi --> Codex["OpenAI Codex subscription"]
+  Core --> Slot1["Browser container<br/>slot 1"]
+  Core --> Slot2["Browser container<br/>slot 2"]
+  Core --> Workspace[("Shared workspace mount")]
+  Slot1 & Slot2 --> Workspace
 ```
+
+Pi agents are sessions inside the shared SlopBot process, not containers. The two browser containers are optional assignable work surfaces with separate login profiles.
 
 See [docs/roadmap.md](docs/roadmap.md) for the blueprint gap analysis and build order.
 
@@ -37,10 +44,10 @@ bun start
 
 - Web UI built with React, Vite, Tailwind, and TanStack Router.
 - End-to-end typed oRPC API hosted by Hono.
-- Two stable agents: `lead` and `worker`.
+- Stable `lead` and `worker` defaults, with additional bots managed in Settings.
 - Separate durable transcripts and a SQLite message queue.
 - Asynchronous correlated `send_to_agent` handoffs with bounded retries and visible delivery state.
-- One SlopBot browser-runtime container per agent, controlled through its small TypeScript API.
+- One shared SlopBot container for every Pi session, plus two assignable browser-runtime containers controlled through a small TypeScript API.
 - A live browser preview with direct pointer and scroll input.
 - Skills are listed in Settings and attached to a run only when selected.
 - The `gmaps-leads-cli` skill is mounted from `$CODEX_HOME`, and WORKER can run its Linux `leads` binary through Pi's shell tool.
@@ -69,7 +76,7 @@ Open `http://127.0.0.1:4317` for the local UI.
 
 ## Local browser sandboxes
 
-`compose.yaml` runs one browser-runtime service for LEAD and one for WORKER. Both mount the selected workspace, while separate Docker volumes preserve each browser login across container rebuilds. The runtime is implemented in TypeScript under [`packages/browser-runtime`](packages/browser-runtime/README.md).
+`compose.yaml` runs the shared SlopBot app and two browser-runtime slots. Slots are assigned to agents when available. Both mount the selected workspace, while separate Docker volumes preserve each browser login across container rebuilds. The runtime is implemented in TypeScript under [`packages/browser-runtime`](packages/browser-runtime/README.md).
 
 ```sh
 docker compose up -d --build

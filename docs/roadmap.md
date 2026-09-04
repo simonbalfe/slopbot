@@ -17,7 +17,7 @@ Status labels: **Done** is working now, **Partial** has a usable foundation but 
 | Messaging | Strong | Durable correlated envelopes, FIFO inboxes, bounded retries, completion state, visible delivery status, hidden wakes, and restart recovery |
 | Orchestration | Basic | One serial run per agent with `idle`, `running`, and `error` state |
 | Memory | Missing | Pi transcripts persist, but there is no separate durable memory service |
-| Computer | Strong | One SlopBot-owned browser runtime and persistent login profile per assigned agent; workspace files remain shared |
+| Computer | Strong | Two assignable browser containers provide persistent login profiles; Pi sessions share one app process and the workspace mount is shared across services |
 | Permissions | Weak | Tool schemas validate input, but runtime approval is `never` and browser-enabled agents currently receive full container access |
 | Model | Partial | Pi wraps the OpenAI Codex provider, but SlopBot does not yet expose a provider-neutral adapter contract |
 
@@ -72,7 +72,7 @@ Acceptance:
 - **Todo:** Replace blanket runtime approval with `always`, `ask`, and `never` policies.
 - **Todo:** Add scoped `allow once`, `deny`, `always allow`, and `never allow` decisions.
 - **Todo:** Bind approvals to agent, action, target, run, and expiry.
-- **Done:** Agent actions run in SlopBot-owned Docker browser runtimes; no tool currently exposes the user's Mac directly.
+- **Done:** Pi sessions run in the SlopBot app container, browser automation runs in separate SlopBot-owned browser containers, and no tool exposes the user's Mac directly.
 - **Partial:** Typed schemas validate host tool calls, but side effects and authorization decisions are not stored in an audit log.
 
 Acceptance:
@@ -93,7 +93,7 @@ Use rooms only for multi-party judgment. Keep clear handoffs as direct messages.
 
 ## Milestone 6: scalable agents and work surfaces
 
-- **Todo:** Let users create, edit, disable, and delete agents through the typed API and UI.
+- **Partial:** Users can create and delete agents through the typed API and UI; editing and disabling remain.
 - **Todo:** Provision or queue browser sandboxes when agent count exceeds current capacity.
 - **Partial:** SQLite persists sandbox assignments and the UI exposes each login view, but capacity and availability are not modelled as states.
 - **Todo:** Add file ownership, worktrees, or locks when agents write concurrently.
