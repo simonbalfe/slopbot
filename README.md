@@ -2,6 +2,23 @@
 
 SlopBot is a minimal two-agent desktop app. LEAD coordinates work, WORKER executes it, and every handoff is a durable message rather than shared chat context.
 
+## Architecture
+
+```mermaid
+flowchart LR
+  UI["Electron or web UI"] --> API["Bun API"]
+  API --> Core["Agent controller"]
+  Core <--> Store[("SQLite queue and transcripts")]
+  Core --> Lead["LEAD<br/>Pi session"]
+  Core --> Worker["WORKER<br/>Pi session"]
+  Lead & Worker --> Codex["OpenAI Codex subscription"]
+  Lead --> Screen0["Chromium screen :99.0"]
+  Worker --> Screen1["Chromium screen :99.1"]
+  Screen0 & Screen1 --> Workspace[("Shared /workspace")]
+```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete runtime and permission-boundary diagram.
+
 ```sh
 bun install
 bun start
