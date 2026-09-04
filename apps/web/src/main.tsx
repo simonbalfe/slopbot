@@ -18,6 +18,38 @@ type Message = Agent["messages"][number];
 type Skill = Awaited<ReturnType<typeof api.skills.list>>[number];
 type BrowserInput = Parameters<typeof api.agents.browserInput>[0]["input"];
 type AuthState = Awaited<ReturnType<typeof api.auth.state>>;
+type ImageAttachment = NonNullable<
+  Parameters<typeof api.agents.send>[0]["images"]
+>[number];
+
+const imageMimeTypes = ["image/png", "image/jpeg", "image/webp"] as const;
+
+function isImageMimeType(value: string): value is ImageAttachment["mimeType"] {
+  return imageMimeTypes.some((mimeType) => mimeType === value);
+}
+
+async function imageAttachment(file: File): Promise<ImageAttachment> {
+  if (!isImageMimeType(file.type))
+    throw new Error("Paste a PNG, JPEG, or WebP image");
+  if (file.size > 10 * 1024 * 1024)
+    throw new Error("Each image must be 10 MB or smaller");
+  const url = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      typeof reader.result === "string"
+        ? resolve(reader.result)
+        : reject(new Error("Could not read the image"));
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the image"));
+    reader.readAsDataURL(file);
+  });
+  const separator = url.indexOf(",");
+  if (separator < 0) throw new Error("Could not read the image");
+  return { mimeType: file.type, data: url.slice(separator + 1) };
+}
+
+function imageUrl(image: ImageAttachment): string {
+  return `data:${image.mimeType};base64,${image.data}`;
+}
 
 const avatarStyle = (id: string): string =>
   id === "lead"
@@ -106,6 +138,18 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
               <div
                 className={`rounded-2xl px-3 py-2.5 ${outbound ? "rounded-tr-md bg-[#37302a]" : "rounded-tl-md bg-[#212123]"}`}
               >
+                {message.images.length > 0 && (
+                  <div className="mb-2 flex max-w-lg flex-wrap gap-2">
+                    {message.images.map((image, imageIndex) => (
+                      <img
+                        alt={`Attachment ${imageIndex + 1}`}
+                        className="max-h-72 max-w-full rounded-lg object-contain"
+                        key={imageIndex}
+                        src={imageUrl(image)}
+                      />
+                    ))}
+                  </div>
+                )}
                 <div className="message-markdown">
                   <Markdown>{message.text}</Markdown>
                 </div>
@@ -144,6 +188,8 @@ function App(): React.ReactNode {
   const [skills, setSkills] = useState<readonly Skill[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [images, setImages] = useState<readonly ImageAttachment[]>([]);
+  const [composerError, setComposerError] = useState("");
   const [screenUrl, setScreenUrl] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -214,11 +260,38 @@ function App(): React.ReactNode {
 
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
-    if (!agent || !prompt.trim() || agent.status === "running") return;
+    if (!agent || (!prompt.trim() && !images.length) || agent.status === "running")
+      return;
     const text = prompt.trim();
-    setPrompt("");
-    await api.agents.send({ agentId: agent.id, text });
-    await refresh();
+    setComposerError("");
+    try {
+      await api.agents.send({ agentId: agent.id, text, images: [...images] });
+      setPrompt("");
+      setImages([]);
+      await refresh();
+    } catch (error) {
+      setComposerError(errorText(error));
+    }
+  };
+  const pasteImages = async (
+    event: React.ClipboardEvent<HTMLInputElement>,
+  ): Promise<void> => {
+    const files = Array.from(event.clipboardData.files).filter((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (!files.length) return;
+    event.preventDefault();
+    setComposerError("");
+    try {
+      const pasted = await Promise.all(files.map(imageAttachment));
+      const next = [...images, ...pasted];
+      if (next.length > 4) throw new Error("Attach up to 4 images");
+      if (next.reduce((size, image) => size + image.data.length, 0) > 20_000_000)
+        throw new Error("Image attachments are too large");
+      setImages(next);
+    } catch (error) {
+      setComposerError(errorText(error));
+    }
   };
   const clear = async (): Promise<void> => {
     if (
@@ -431,17 +504,48 @@ function App(): React.ReactNode {
         </header>
         <Chat agent={agent} />
         <form className="border-t border-line p-4" onSubmit={send}>
+          {images.length > 0 && (
+            <div className="mb-2 flex gap-2 overflow-auto">
+              {images.map((image, imageIndex) => (
+                <div className="relative shrink-0" key={imageIndex}>
+                  <img
+                    alt={`Pasted attachment ${imageIndex + 1}`}
+                    className="size-20 rounded-lg border border-line object-cover"
+                    src={imageUrl(image)}
+                  />
+                  <button
+                    aria-label={`Remove image ${imageIndex + 1}`}
+                    className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-zinc-100 text-xs text-zinc-900"
+                    onClick={() =>
+                      setImages((current) =>
+                        current.filter((_, index) => index !== imageIndex),
+                      )
+                    }
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {composerError && (
+            <p className="mb-2 text-xs text-red-300">{composerError}</p>
+          )}
           <div className="flex gap-2">
             <input
               className="min-w-0 flex-1 rounded-xl border border-line bg-raised px-3 py-2.5 outline-none focus:border-zinc-500"
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
-              placeholder="Message agent"
+              onPaste={(event) => void pasteImages(event)}
+              placeholder="Message agent or paste an image"
             />
             <button
               type="submit"
               className="h-auto rounded-xl bg-brand px-4 font-semibold text-zinc-900 disabled:opacity-40"
-              disabled={agent.status === "running"}
+              disabled={
+                agent.status === "running" || (!prompt.trim() && !images.length)
+              }
             >
               Send
             </button>

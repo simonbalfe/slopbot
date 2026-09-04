@@ -11,6 +11,7 @@ import {
   BrowserInputSchema,
   CreateAgentInputSchema,
   CreateSkillInputSchema,
+  ImageAttachmentsSchema,
   PiRuntime,
   SandboxComputerOptionsSchema,
 } from "slopbot";
@@ -20,8 +21,11 @@ import { loadConfig } from "./config.ts";
 
 const AgentIdSchema = z.object({ agentId: textSchema(100) });
 const SendMessageSchema = AgentIdSchema.extend({
-  text: textSchema(8_000),
+  text: z.string().trim().max(8_000).default(""),
+  images: ImageAttachmentsSchema.default([]),
   skill: textSchema(100).nullish(),
+}).refine(({ text, images }) => Boolean(text || images.length), {
+  message: "A message or image is required",
 });
 const AgentBrowserInputSchema = AgentIdSchema.extend({
   input: BrowserInputSchema,
@@ -62,7 +66,12 @@ export const appRouter = {
     send: os
       .input(SendMessageSchema)
       .handler(({ input }) =>
-        agents.sendMessage(input.agentId, input.text, input.skill ?? undefined),
+        agents.sendMessage(
+          input.agentId,
+          input.text,
+          input.skill ?? undefined,
+          input.images,
+        ),
       ),
     clear: os
       .input(AgentIdSchema)

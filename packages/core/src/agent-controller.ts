@@ -6,6 +6,7 @@ import type { StoredAgent } from "./agent-store.ts";
 import {
   AgentIdSchema,
   AgentProfileSchema,
+  ImageAttachmentsSchema,
   createAgentId,
 } from "./agent-types.ts";
 import type {
@@ -14,6 +15,7 @@ import type {
   AgentStatus,
   AgentView,
   DesktopAssignment,
+  ImageAttachment,
   MessageEnvelope,
 } from "./agent-types.ts";
 import {
@@ -44,11 +46,16 @@ export const AgentControllerOptionsSchema = z.object({
   databasePath: z.string().min(1),
   computer: SandboxComputerOptionsSchema.optional(),
 });
-const UserMessageSchema = z.object({
-  agentId: AgentIdSchema,
-  text: textSchema(8_000),
-  skillName: textSchema(100).nullish(),
-});
+const UserMessageSchema = z
+  .object({
+    agentId: AgentIdSchema,
+    text: z.string().trim().max(8_000),
+    images: ImageAttachmentsSchema,
+    skillName: textSchema(100).nullish(),
+  })
+  .refine(({ text, images }) => Boolean(text || images.length), {
+    message: "A message or image is required",
+  });
 export const CreateAgentInputSchema = z.object({
   id: z
     .string()
@@ -279,10 +286,12 @@ export class AgentController {
     rawAgentId: string,
     text: string,
     skillName?: string,
+    images: readonly ImageAttachment[] = [],
   ): MessageEnvelope {
     const parsed = UserMessageSchema.parse({
       agentId: rawAgentId,
       text,
+      images,
       skillName,
     });
     const agent = this.agent(parsed.agentId);
@@ -296,7 +305,8 @@ export class AgentController {
       recipientId: agent.profile.id,
       parentId: null,
       replyRequired: false,
-      text: parsed.text,
+      text: parsed.text || "Please inspect the attached image.",
+      images: parsed.images,
       skillName: parsed.skillName ?? null,
     });
     this.schedule(agent);
@@ -479,6 +489,7 @@ export class AgentController {
       parentId,
       replyRequired,
       text,
+      images: [],
       skillName: null,
     });
     this.schedule(recipient);
@@ -518,6 +529,9 @@ export class AgentController {
           text_elements: [],
         },
       ];
+      input.push(
+        ...message.images.map((image) => ({ type: "image" as const, ...image })),
+      );
       if (skill)
         input.push({ type: "skill", name: skill.name, path: skill.path });
       const turnId = await this.runtime.startTurn(agent.threadId, input);

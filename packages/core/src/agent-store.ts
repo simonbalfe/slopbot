@@ -8,10 +8,17 @@ import {
   AgentIdSchema,
   AgentMessageSchema,
   AgentProfileSchema,
+  ImageAttachmentsSchema,
   MessageEnvelopeSchema,
   MessageIdSchema,
 } from "./agent-types.ts";
-import type { AgentId, AgentMessage, AgentProfile, MessageEnvelope } from "./agent-types.ts";
+import type {
+  AgentId,
+  AgentMessage,
+  AgentProfile,
+  ImageAttachment,
+  MessageEnvelope,
+} from "./agent-types.ts";
 import { ThreadIdSchema } from "./runtime-types.ts";
 import type { ThreadId } from "./runtime-types.ts";
 
@@ -26,6 +33,12 @@ const StoredAgentRowSchema = z.object({
   threadConfig: z.string().nullable(),
 });
 const ColumnSchema = z.object({ name: z.string() });
+const MessageEnvelopeRowSchema = MessageEnvelopeSchema.omit({
+  images: true,
+}).extend({ imagesJson: z.string() });
+const AgentMessageRowSchema = AgentMessageSchema.omit({ images: true }).extend({
+  imagesJson: z.string(),
+});
 
 export type StoredAgent = Readonly<{
   profile: AgentProfile;
@@ -39,6 +52,7 @@ type QueueMessageInput = Readonly<{
   parentId: MessageEnvelope["parentId"];
   replyRequired: boolean;
   text: string;
+  images: readonly ImageAttachment[];
   skillName: string | null;
 }>;
 
@@ -73,6 +87,7 @@ export class AgentStore {
         parent_id TEXT REFERENCES message_envelopes(id),
         reply_required INTEGER NOT NULL DEFAULT 0 CHECK(reply_required IN (0, 1)),
         text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND 8000),
+        images_json TEXT NOT NULL DEFAULT '[]',
         skill_name TEXT,
         status TEXT NOT NULL CHECK(status IN ('queued', 'processing', 'delivered', 'failed')),
         attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
@@ -122,6 +137,10 @@ export class AgentStore {
     if (!messageColumns.some(({ name }) => name === "lease_expires_at"))
       this.database.exec(
         "ALTER TABLE message_envelopes ADD COLUMN lease_expires_at TEXT",
+      );
+    if (!messageColumns.some(({ name }) => name === "images_json"))
+      this.database.exec(
+        "ALTER TABLE message_envelopes ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'",
       );
   }
 
@@ -236,8 +255,8 @@ export class AgentStore {
       this.database.query(`
         INSERT INTO message_envelopes
           (id, sender_id, recipient_id, parent_id, reply_required, text,
-           skill_name, status, attempt_count, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           images_json, skill_name, status, attempt_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         message.id,
         message.senderId,
@@ -245,6 +264,7 @@ export class AgentStore {
         message.parentId,
         message.replyRequired ? 1 : 0,
         message.text,
+        JSON.stringify(message.images),
         message.skillName,
         message.status,
         message.attemptCount,
@@ -261,13 +281,14 @@ export class AgentStore {
     return MessageEnvelopeSchema.array().parse(this.database.query(`
       SELECT
         id, sender_id AS senderId, recipient_id AS recipientId, text,
+        images_json AS imagesJson,
         parent_id AS parentId, reply_required AS replyRequired,
         skill_name AS skillName, status, attempt_count AS attemptCount,
         created_at AS createdAt, delivered_at AS deliveredAt,
         lease_expires_at AS leaseExpiresAt, turn_id AS turnId
       FROM message_envelopes WHERE status = 'processing'
       ORDER BY created_at, id
-    `).all());
+    `).all().map((row) => this.parseMessageEnvelope(row)));
   }
 
   requeueMessage(messageId: string, retryLimit: number): boolean {
@@ -302,12 +323,13 @@ export class AgentStore {
       )
       RETURNING
         id, sender_id AS senderId, recipient_id AS recipientId, text,
+        images_json AS imagesJson,
         parent_id AS parentId, reply_required AS replyRequired,
         skill_name AS skillName, status, attempt_count AS attemptCount,
         created_at AS createdAt, delivered_at AS deliveredAt,
         lease_expires_at AS leaseExpiresAt, turn_id AS turnId
     `).get(leaseExpiresAt, agentId);
-    return row ? MessageEnvelopeSchema.parse(row) : undefined;
+    return row ? this.parseMessageEnvelope(row) : undefined;
   }
 
   setTurn(messageId: string, turnId: string): void {
@@ -346,12 +368,13 @@ export class AgentStore {
       SELECT
         e.id, e.agent_id AS agentId, e.message_id AS messageId, e.role, e.direction,
         e.text, e.sender_id AS senderId, e.recipient_id AS recipientId,
-        e.created_at AS createdAt, m.status
+        e.created_at AS createdAt, m.status,
+        COALESCE(m.images_json, '[]') AS imagesJson
       FROM transcript_events e
       LEFT JOIN message_envelopes m ON m.id = e.message_id
       WHERE e.agent_id = ?
       ORDER BY e.created_at, e.rowid
-    `).all(agentId));
+    `).all(agentId).map((row) => this.parseAgentMessage(row)));
   }
 
   lastMessage(agentId: AgentId): AgentMessage | undefined {
@@ -359,13 +382,14 @@ export class AgentStore {
       SELECT
         e.id, e.agent_id AS agentId, e.message_id AS messageId, e.role, e.direction,
         e.text, e.sender_id AS senderId, e.recipient_id AS recipientId,
-        e.created_at AS createdAt, m.status
+        e.created_at AS createdAt, m.status,
+        COALESCE(m.images_json, '[]') AS imagesJson
       FROM transcript_events e
       LEFT JOIN message_envelopes m ON m.id = e.message_id
       WHERE e.agent_id = ?
       ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1
     `).get(agentId);
-    return row ? AgentMessageSchema.parse(row) : undefined;
+    return row ? this.parseAgentMessage(row) : undefined;
   }
 
   addAssistantMessage(agentId: AgentId, text: string): AgentMessage {
@@ -376,6 +400,7 @@ export class AgentStore {
       role: "assistant",
       direction: "outbound",
       text,
+      images: [],
       senderId: agentId,
       recipientId: null,
       createdAt: new Date().toISOString(),
@@ -447,6 +472,7 @@ export class AgentStore {
       role: message.senderId ? "agent" : "user",
       direction,
       text: message.text,
+      images: message.images,
       senderId: message.senderId,
       recipientId: message.recipientId,
       createdAt: message.createdAt,
@@ -470,5 +496,23 @@ export class AgentStore {
       message.recipientId,
       message.createdAt,
     );
+  }
+
+  private parseMessageEnvelope(value: unknown): MessageEnvelope {
+    const row = MessageEnvelopeRowSchema.parse(value);
+    const { imagesJson, ...message } = row;
+    return MessageEnvelopeSchema.parse({
+      ...message,
+      images: ImageAttachmentsSchema.parse(JSON.parse(imagesJson)),
+    });
+  }
+
+  private parseAgentMessage(value: unknown): AgentMessage {
+    const row = AgentMessageRowSchema.parse(value);
+    const { imagesJson, ...message } = row;
+    return AgentMessageSchema.parse({
+      ...message,
+      images: ImageAttachmentsSchema.parse(JSON.parse(imagesJson)),
+    });
   }
 }

@@ -12,6 +12,27 @@ export const MessageStatusSchema = z.enum([
   "delivered",
   "failed",
 ]);
+export const ImageAttachmentSchema = z.object({
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+  data: z
+    .string()
+    .min(1)
+    .max(14_000_000)
+    .refine(
+      (value) =>
+        value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value),
+      "Invalid base64 image",
+    ),
+});
+export const ImageAttachmentsSchema = z
+  .array(ImageAttachmentSchema)
+  .max(4)
+  .refine(
+    (images) =>
+      images.reduce((size, image) => size + image.data.length, 0) <=
+      20_000_000,
+    "Image attachments are too large",
+  );
 export const DesktopAssignmentSchema = z.object({
   computerId: z.literal("slopbot-browser"),
   screen: z.number().int().nonnegative(),
@@ -32,6 +53,7 @@ export const MessageEnvelopeSchema = z.object({
   parentId: MessageIdSchema.nullable(),
   replyRequired: z.coerce.boolean(),
   text: textSchema(8_000),
+  images: ImageAttachmentsSchema,
   skillName: textSchema(100).nullable(),
   status: MessageStatusSchema,
   attemptCount: z.number().int().nonnegative(),
@@ -47,6 +69,7 @@ export const AgentMessageSchema = z.object({
   role: z.enum(["user", "agent", "assistant"]),
   direction: z.enum(["inbound", "outbound"]),
   text: z.string(),
+  images: ImageAttachmentsSchema,
   senderId: AgentIdSchema.nullable(),
   recipientId: AgentIdSchema.nullable(),
   createdAt: z.iso.datetime(),
@@ -68,6 +91,7 @@ export type AgentId = z.infer<typeof AgentIdSchema>;
 export type MessageId = z.infer<typeof MessageIdSchema>;
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 export type MessageStatus = z.infer<typeof MessageStatusSchema>;
+export type ImageAttachment = Readonly<z.infer<typeof ImageAttachmentSchema>>;
 export type DesktopAssignment = Readonly<
   z.infer<typeof DesktopAssignmentSchema>
 >;

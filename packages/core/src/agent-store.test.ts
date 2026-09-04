@@ -36,10 +36,16 @@ test("persists correlated delivery and bounds retries", () => {
       parentId: null,
       replyRequired: true,
       text: "Build it",
+      images: [{ mimeType: "image/png", data: "aGVsbG8=" }],
       skillName: null,
     });
     expect(store.hasPendingMessages(worker.id)).toBe(true);
-    expect(store.claimNextMessage(worker.id)?.attemptCount).toBe(1);
+    const firstClaim = store.claimNextMessage(worker.id);
+    expect(firstClaim?.attemptCount).toBe(1);
+    expect(firstClaim?.images).toEqual([
+      { mimeType: "image/png", data: "aGVsbG8=" },
+    ]);
+    expect(store.listMessages(worker.id)[0]?.images).toEqual(firstClaim?.images);
     store.close();
 
     store = new AgentStore(databasePath);
@@ -53,6 +59,7 @@ test("persists correlated delivery and bounds retries", () => {
       parentId: request.id,
       replyRequired: false,
       text: "Built",
+      images: [],
       skillName: null,
     });
     expect(reply.parentId).toBe(request.id);
@@ -65,6 +72,7 @@ test("persists correlated delivery and bounds retries", () => {
       parentId: null,
       replyRequired: true,
       text: "Retry it",
+      images: [],
       skillName: null,
     });
     for (let attempt = 1; attempt <= 3; attempt++) {

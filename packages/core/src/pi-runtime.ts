@@ -17,6 +17,7 @@ import type {
 import { Type } from "typebox";
 import { z } from "zod";
 
+import { ImageAttachmentSchema } from "./agent-types.ts";
 import { errorMessage, JsonObjectSchema } from "./protocol.ts";
 import type { JsonObject } from "./protocol.ts";
 import { SandboxModeSchema, ThreadIdSchema } from "./runtime-types.ts";
@@ -34,7 +35,14 @@ export const SkillInputSchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
 });
-export const TurnInputSchema = z.discriminatedUnion("type", [TextInputSchema, SkillInputSchema]);
+export const ImageInputSchema = ImageAttachmentSchema.extend({
+  type: z.literal("image"),
+});
+export const TurnInputSchema = z.discriminatedUnion("type", [
+  TextInputSchema,
+  SkillInputSchema,
+  ImageInputSchema,
+]);
 export const DynamicToolSchema = z.object({
   type: z.literal("function"),
   name: z.string().min(1),
@@ -85,6 +93,7 @@ export type Skill = Readonly<{
 }>;
 export type TextInput = Readonly<z.infer<typeof TextInputSchema>>;
 export type SkillInput = Readonly<z.infer<typeof SkillInputSchema>>;
+export type ImageInput = Readonly<z.infer<typeof ImageInputSchema>>;
 export type TurnInput = Readonly<z.infer<typeof TurnInputSchema>>;
 export type DynamicTool = Readonly<z.infer<typeof DynamicToolSchema>>;
 export type ThreadOptions = Readonly<z.infer<typeof ThreadOptionsSchema>>;
@@ -269,6 +278,9 @@ export class PiRuntime {
     const parsedInput = z.array(TurnInputSchema).min(1).parse(input);
     const text = parsedInput.filter((item): item is TextInput => item.type === "text").map((item) => item.text).join("\n\n");
     const skill = parsedInput.find((item): item is SkillInput => item.type === "skill");
+    const images = parsedInput
+      .filter((item): item is ImageInput => item.type === "image")
+      .map(({ data, mimeType }) => ({ type: "image" as const, data, mimeType }));
     const prompt = skill ? `/skill:${skill.name} ${text}` : text;
     const turnId = TurnIdSchema.parse(randomUUID());
 
@@ -277,6 +289,7 @@ export class PiRuntime {
     let resolveAccepted: (accepted: boolean) => void = () => {};
     const accepted = new Promise<boolean>((resolve) => { resolveAccepted = resolve; });
     void managed.session.prompt(prompt, {
+      ...(images.length ? { images } : {}),
       preflightResult: (value) => {
         preflightAccepted = value;
         resolveAccepted(value);
