@@ -1,6 +1,6 @@
-# OpenBot
+# SlopBot
 
-OpenBot is a minimal two-agent desktop app. LEAD coordinates work, WORKER executes it, and every handoff is a durable message rather than shared chat context.
+SlopBot is a minimal two-agent desktop app. LEAD coordinates work, WORKER executes it, and every handoff is a durable message rather than shared chat context.
 
 ```sh
 bun install
@@ -25,18 +25,18 @@ bun run start:server
 - Skills are listed in Settings and attached to a run only when selected.
 - Read-only Mac file and directory access is approval-gated by the local companion.
 
-The current model runtime is Codex App Server. Pi was selected as the replacement runtime but has not yet been wired in. The migration changes only the model and tool-call adapter: OpenBot's agent registry, SQLite queue, browser CDP tool, local-computer approval boundary, and UI remain host-owned.
+The model runtime is Pi's in-process SDK using the `openai-codex` provider and a ChatGPT Plus or Pro subscription. SlopBot's agent registry, SQLite queue, browser CDP tool, local-computer approval boundary, and UI remain host-owned.
 
-The package currently exports the Codex transport and orchestration layers separately:
+The core package exports the Pi runtime and SlopBot orchestration layers separately:
 
 ```ts
-import { AgentController, CodexAppServer } from "openbot";
+import { AgentController, PiRuntime } from "slopbot";
 
 const cwd = process.cwd();
-const client = new CodexAppServer({ cwd });
-const agents = new AgentController(client, {
+const runtime = new PiRuntime({ cwd });
+const agents = new AgentController(runtime, {
   cwd,
-  databasePath: ".openbot/openbot.sqlite",
+  databasePath: ".slopbot/slopbot.sqlite",
 });
 
 await agents.initialize();
@@ -47,19 +47,26 @@ Agent profiles, runtime session IDs, message envelopes, delivery states, and vis
 
 Open `http://127.0.0.1:4317` for the local UI.
 
-## Shared cloud computer
+## Local Docker computer
 
 `compose.yaml` runs one Linux computer with one Xvfb server and two X11 screens. LEAD and WORKER each keep a stable screen, browser profile, runtime session, and noVNC URL while sharing `/workspace`. Agents control only their own browser through a private Chromium CDP endpoint. noVNC is the live viewer and human-login surface.
 
 ```sh
 docker compose up -d --build
-docker exec -it openbot codex login --device-auth
+docker compose run --rm --entrypoint /app/packages/core/node_modules/.bin/pi slopbot
 ```
 
-The Compose ports bind only to the Hetzner host's Tailscale address. Start Electron with `OPENBOT_SERVER_URL=http://100.68.65.17:4317 bun start` to use the cloud computer.
+In Pi, run `/login` and choose ChatGPT Plus/Pro (Codex). The OAuth tokens are stored under the existing `data` volume and refreshed by Pi.
+
+Open `http://127.0.0.1:4317`. LEAD and WORKER are viewable at `http://127.0.0.1:6080/vnc.html` and `http://127.0.0.1:6081/vnc.html`.
+
+For a cloud host, copy `.env.example` to `.env`, set `SLOPBOT_BIND_ADDRESS` to the host's private network address and `SLOPBOT_X11_VIEWER_BASE_URL` to its reachable URL, then run the same command.
 
 Electron also exposes a read-only companion on the Mac's Tailscale address. Agents can request one file read or directory listing at a time. Every request shows a native macOS approval dialog, stays within the user's home directory, and is limited to 64 KiB for files and 200 entries for directories.
 
-## Runtime migration
+## Repository layout
 
-The next implementation step is a `PiRuntime` adapter using Pi's SDK in-process. It will replace `CodexAppServer` without spawning the Pi CLI. Pi will supply session execution, model authentication, provider routing, shell and file tools, and custom-tool callbacks. The host retains the durable coordination state and routes `send_to_agent`, `browser_cdp`, and local-computer calls through its existing validated handlers.
+- `apps/desktop`: Electron shell and approval-gated Mac companion.
+- `apps/server`: Bun API and static UI host.
+- `apps/web`: React, Vite, and Tailwind renderer.
+- `packages/core`: Pi runtime adapter, orchestration, persistence, and computer tools.

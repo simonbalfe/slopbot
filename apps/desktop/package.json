@@ -1,0 +1,20 @@
+{
+  "name": "@slopbot/desktop",
+  "productName": "SlopBot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/electron-main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "check": "tsc --noEmit",
+    "build": "bun build src/main.ts --target=node --format=cjs --external=electron --outfile=dist/electron-main.cjs"
+  },
+  "dependencies": {
+    "slopbot": "workspace:*",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "electron": "44.2.0"
+  }
+}

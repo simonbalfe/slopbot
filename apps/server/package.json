@@ -1,0 +1,15 @@
+{
+  "name": "@slopbot/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "check": "tsc --noEmit",
+    "build": "bun build src/index.ts --target=bun --outdir=dist"
+  },
+  "dependencies": {
+    "slopbot": "workspace:*",
+    "zod": "4.5.4"
+  }
+}

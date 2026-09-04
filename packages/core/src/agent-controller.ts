@@ -17,16 +17,16 @@ import type {
   MessageEnvelope,
 } from "./agent-types.ts";
 import { BrowserCdp, BrowserCdpArgumentsSchema, BrowserCdpInputSchema } from "./browser-cdp.ts";
-import { CodexAppServer } from "./codex-app-server.ts";
+import { PiRuntime } from "./pi-runtime.ts";
 import type {
-  AppServerNotification,
   DynamicTool,
+  RuntimeNotification,
   SandboxMode,
   Skill,
   ThreadId,
   ThreadOptions,
   TurnInput,
-} from "./codex-app-server.ts";
+} from "./pi-runtime.ts";
 import { LocalComputerClient, LocalComputerOperationSchema } from "./local-computer.ts";
 import { errorMessage, textSchema } from "./protocol.ts";
 import type { JsonObject } from "./protocol.ts";
@@ -174,7 +174,7 @@ export class AgentController {
   private readonly store: AgentStore;
   private skills: readonly Skill[] = [];
 
-  constructor(private readonly client: CodexAppServer, options: AgentControllerOptions) {
+  constructor(private readonly runtime: PiRuntime, options: AgentControllerOptions) {
     this.options = AgentControllerOptionsSchema.parse(options);
     this.store = new AgentStore(this.options.databasePath);
     this.computer = this.options.computer ? new SharedComputer(this.options.computer) : undefined;
@@ -186,9 +186,9 @@ export class AgentController {
   async initialize(profiles: readonly AgentProfile[] = defaultAgentProfiles): Promise<void> {
     await this.computer?.start();
     try {
-      this.client.handleRequests((request) => this.handleServerRequest(request));
-      this.client.onNotification((notification) => this.handleNotification(notification));
-      await this.client.connect();
+      this.runtime.handleRequests((request) => this.handleRuntimeRequest(request));
+      this.runtime.onNotification((notification) => this.handleNotification(notification));
+      await this.runtime.connect();
       await this.reloadSkills(true);
       this.store.upsertProfiles(profiles);
       this.store.releaseDesktops(retiredDefaultAgentIds);
@@ -214,6 +214,7 @@ export class AgentController {
   }
 
   close(): void {
+    this.runtime.close();
     this.computer?.close();
     this.store.close();
   }
@@ -235,7 +236,7 @@ export class AgentController {
     const desktop = this.assignDesktop(validated.id);
     const options = this.threadOptions(validated, desktop);
     const threadConfig = this.threadConfig(options);
-    const threadId = await this.client.startThread(options);
+    const threadId = await this.runtime.startThread(options);
     this.store.saveAgent(validated, threadId, threadConfig);
     const agent = { profile: validated, threadId, desktop, status: "idle" } satisfies Agent;
     this.agents.set(validated.id, agent);
@@ -276,8 +277,8 @@ export class AgentController {
       throw new AgentControllerError("agent-running", "Wait for the agent to finish before clearing its chat");
     }
     const options = this.threadOptions(agent.profile, agent.desktop);
-    const threadId = await this.client.startThread(options);
-    const updated = { ...agent, threadId } satisfies Agent;
+    const threadId = await this.runtime.startThread(options);
+    const updated = { ...agent, threadId, status: "idle" } satisfies Agent;
     this.store.clearAgentChat(agent.profile.id);
     this.store.setThread(agent.profile.id, threadId, this.threadConfig(options));
     this.agents.set(agent.profile.id, updated);
@@ -300,14 +301,14 @@ export class AgentController {
     if (stored.threadConfig !== threadConfig) threadId = null;
     if (threadId && stored.threadConfig === threadConfig) {
       try {
-        threadId = await this.client.resumeThread(threadId, options);
+        threadId = await this.runtime.resumeThread(threadId, options);
       } catch (error) {
         console.warn(`Could not resume ${stored.profile.id}: ${errorMessage(error)}`);
         threadId = null;
       }
     }
     if (!threadId) {
-      threadId = await this.client.startThread(options);
+      threadId = await this.runtime.startThread(options);
       this.store.setThread(stored.profile.id, threadId, threadConfig);
     }
     this.agents.set(stored.profile.id, { profile: stored.profile, threadId, desktop, status: "idle" });
@@ -318,7 +319,7 @@ export class AgentController {
       cwd: this.options.cwd,
       approvalPolicy: "never",
       sandbox: this.sandboxFor(profile),
-      serviceName: "openbot",
+      serviceName: "slopbot",
       developerInstructions: this.instructionsFor(profile, desktop),
       dynamicTools: [sendToAgentTool, ...(desktop ? [browserCdpTool] : []), ...(this.localComputer ? localComputerTools : [])],
     };
@@ -331,7 +332,7 @@ export class AgentController {
         this.store.markFailed(message.id);
         continue;
       }
-      if (await this.client.threadContainsText(recipient.threadId, message.id)) {
+      if (await this.runtime.threadContainsText(recipient.threadId, message.id)) {
         this.store.markDelivered(message.id, null);
       } else {
         this.store.requeueMessage(message.id);
@@ -346,7 +347,7 @@ export class AgentController {
       .join(", ");
     const computer = desktop ? ` You share one virtual computer with the team. Your private X11 screen is ${desktop.display}, with a persistent Chromium profile at ${desktop.browserProfile}. Control that browser only with browser_cdp. Do not use xdotool or another agent's browser.` : "";
     const localComputer = this.localComputer ? " Use local_read_file and local_list_directory only when the task needs data from the user's Mac. Each call requires the user's explicit approval." : "";
-    return `You are ${profile.name} with stable agent ID ${profile.id}. ${profile.role}. ${profile.instructions} The team is ${roster}.${computer}${localComputer} Your transcript is private. Share only deliberate handoffs. When a skill is attached, follow its SKILL.md and use Codex's native shell tool for any CLI it requires. Never claim a command ran without tool output. For OpenBot teammates, use only send_to_agent, never collaboration tools or live agent paths. A send queues a durable message and immediately returns its message ID, never the recipient's reply. Do not poll, invent replies, or send receipt-only acknowledgements.`;
+    return `You are ${profile.name} with stable agent ID ${profile.id}. ${profile.role}. ${profile.instructions} The team is ${roster}.${computer}${localComputer} Your transcript is private. Share only deliberate handoffs. When a skill is attached, follow its SKILL.md and use Pi's shell tool for any CLI it requires. Never claim a command ran without tool output. For SlopBot teammates, use only send_to_agent, never collaboration tools or live agent paths. A send queues a durable message and immediately returns its message ID, never the recipient's reply. Do not poll, invent replies, or send receipt-only acknowledgements.`;
   }
 
   private view(agent: Agent): AgentView {
@@ -429,15 +430,15 @@ export class AgentController {
       if (message.skillName && !skill) throw new AgentControllerError("skill-not-found", `Skill not found: ${message.skillName}`);
       const sender = message.senderId ? this.agent(message.senderId) : undefined;
       const text = sender
-        ? `OpenBot message ${message.id} from ${sender.profile.name} (${sender.profile.id}):\n\n${message.text}\n\nAct on this message. Reply with send_to_agent only when you have a material result. Do not send a receipt acknowledgement.`
-        : `OpenBot user message ${message.id}:\n\n${message.text}`;
+        ? `SlopBot message ${message.id} from ${sender.profile.name} (${sender.profile.id}):\n\n${message.text}\n\nAct on this message. Reply with send_to_agent only when you have a material result. Do not send a receipt acknowledgement.`
+        : `SlopBot user message ${message.id}:\n\n${message.text}`;
       const input: TurnInput[] = [{
         type: "text",
-        text: skill ? `$${skill.name} ${text}` : text,
+        text,
         text_elements: [],
       }];
       if (skill) input.push({ type: "skill", name: skill.name, path: skill.path });
-      const turnId = await this.client.startTurn(agent.threadId, input);
+      const turnId = await this.runtime.startTurn(agent.threadId, input);
       this.store.markDelivered(message.id, turnId);
     } catch (error) {
       this.store.markFailed(message.id);
@@ -446,7 +447,7 @@ export class AgentController {
     }
   }
 
-  private async handleServerRequest(request: AppServerNotification): Promise<JsonObject> {
+  private async handleRuntimeRequest(request: RuntimeNotification): Promise<JsonObject> {
     if (request.method !== "item/tool/call") throw new Error(`Unsupported server request: ${request.method}`);
     const parsedRequest = ToolRequestSchema.safeParse(request.params);
     if (!parsedRequest.success) return toolResult("Invalid tool request", false);
@@ -501,7 +502,7 @@ export class AgentController {
     return result.success ? toolResult(result.output, true) : toolResult(result.error, false);
   }
 
-  private handleNotification(notification: AppServerNotification): void {
+  private handleNotification(notification: RuntimeNotification): void {
     if (notification.method === "skills/changed") {
       void this.reloadSkills(true).catch((error: unknown) => console.error(`Skill reload failed: ${errorMessage(error)}`));
       return;
@@ -529,7 +530,7 @@ export class AgentController {
   }
 
   private async reloadSkills(forceReload: boolean): Promise<void> {
-    this.skills = (await this.client.listSkills([this.options.cwd], forceReload))
+    this.skills = (await this.runtime.listSkills([this.options.cwd], forceReload))
       .filter((skill) => skill.enabled)
       .sort((left, right) => left.name.localeCompare(right.name));
   }

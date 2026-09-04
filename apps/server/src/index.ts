@@ -5,11 +5,11 @@ import { z } from "zod";
 import {
   AgentController,
   AgentControllerError,
-  CodexAppServer,
+  PiRuntime,
   createAgentId,
   SharedComputerOptionsSchema,
-} from "./src/index.ts";
-import { errorMessage, textSchema } from "./src/protocol.ts";
+} from "slopbot";
+import { errorMessage, textSchema } from "slopbot/protocol";
 
 const CreateAgentSchema = z.object({
   name: textSchema(50),
@@ -22,29 +22,25 @@ const SendMessageSchema = z.object({
 const PassReplySchema = z.object({ to: textSchema(100) });
 
 const port = z.coerce.number().int().min(1).max(65_535).parse(process.env["PORT"] ?? 4317);
-const hostname = z.string().min(1).parse(process.env["OPENBOT_HOST"] ?? "127.0.0.1");
-const cwd = z.string().min(1).parse(process.env["OPENBOT_WORKSPACE"] ?? process.cwd());
-const dataDirectory = z.string().min(1).parse(process.env["OPENBOT_DATA_DIR"] ?? join(cwd, ".openbot"));
-const computer = process.env["OPENBOT_X11_DISPLAY"] ? SharedComputerOptionsSchema.parse({
-  display: process.env["OPENBOT_X11_DISPLAY"],
-  screens: process.env["OPENBOT_X11_SCREENS"] ?? 6,
-  geometry: process.env["OPENBOT_X11_GEOMETRY"] ?? "1920x1080x24",
+const hostname = z.string().min(1).parse(process.env["SLOPBOT_HOST"] ?? "127.0.0.1");
+const cwd = z.string().min(1).parse(process.env["SLOPBOT_WORKSPACE"] ?? process.cwd());
+const dataDirectory = z.string().min(1).parse(process.env["SLOPBOT_DATA_DIR"] ?? join(cwd, ".slopbot"));
+const computer = process.env["SLOPBOT_X11_DISPLAY"] ? SharedComputerOptionsSchema.parse({
+  display: process.env["SLOPBOT_X11_DISPLAY"],
+  screens: process.env["SLOPBOT_X11_SCREENS"] ?? 6,
+  geometry: process.env["SLOPBOT_X11_GEOMETRY"] ?? "1920x1080x24",
   browserProfileRoot: join(dataDirectory, "browsers"),
-  viewerBaseUrl: process.env["OPENBOT_X11_VIEWER_BASE_URL"],
+  viewerBaseUrl: process.env["SLOPBOT_X11_VIEWER_BASE_URL"],
 }) : undefined;
-const uiDirectory = join(import.meta.dir, "ui-dist");
+const uiDirectory = join(import.meta.dir, "..", "ui-dist");
 const uiIndex = join(uiDirectory, "index.html");
-const client = new CodexAppServer({
+const runtime = new PiRuntime({ cwd });
+const agents = new AgentController(runtime, {
   cwd,
-  clientName: "openbot",
-  clientTitle: "OpenBot",
-});
-const agents = new AgentController(client, {
-  cwd,
-  databasePath: join(dataDirectory, "openbot.sqlite"),
+  databasePath: join(dataDirectory, "slopbot.sqlite"),
   ...(computer ? { computer } : {}),
-  ...(process.env["OPENBOT_LOCAL_COMPUTER_URL"]
-    ? { localComputerUrl: process.env["OPENBOT_LOCAL_COMPUTER_URL"] }
+  ...(process.env["SLOPBOT_LOCAL_COMPUTER_URL"]
+    ? { localComputerUrl: process.env["SLOPBOT_LOCAL_COMPUTER_URL"] }
     : {}),
 });
 await agents.initialize();
@@ -138,11 +134,10 @@ const server = Bun.serve({
 
 function shutdown(): void {
   server.stop();
-  client.close();
   agents.close();
 }
 
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
-console.log(`OpenBot: http://${hostname}:${port}`);
+console.log(`SlopBot: http://${hostname}:${port}`);

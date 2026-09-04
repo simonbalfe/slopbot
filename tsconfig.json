@@ -17,8 +17,7 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2023",
-    "types": ["bun-types", "vite/client"],
+    "types": ["bun-types"],
     "verbatimModuleSyntax": true
-  },
-  "include": ["desktop/**/*.ts", "server.ts", "src/**/*.ts", "web/**/*.tsx", "vite.config.ts"]
+  }
 }

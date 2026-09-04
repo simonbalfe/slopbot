@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { SandboxModeSchema, ThreadIdSchema } from "./codex-app-server.ts";
 import { textSchema } from "./protocol.ts";
+import { SandboxModeSchema, ThreadIdSchema } from "./runtime-types.ts";
 
 export const AgentIdSchema = textSchema(100).brand<"AgentId">();
 export const MessageIdSchema = z.uuid().brand<"MessageId">();

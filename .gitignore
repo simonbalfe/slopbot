@@ -1,5 +1,8 @@
 node_modules/
 dist/
 ui-dist/
-.openbot/
+apps/*/dist/
+apps/server/ui-dist/
+.slopbot/
+data/
 .env

@@ -1,26 +1,25 @@
 services:
-  openbot:
+  slopbot:
     build: .
-    container_name: openbot
+    container_name: slopbot
     init: true
     restart: unless-stopped
     environment:
-      OPENBOT_HOST: 0.0.0.0
-      OPENBOT_WORKSPACE: /workspace
-      OPENBOT_DATA_DIR: /data
-      OPENBOT_LOCAL_COMPUTER_URL: http://100.101.71.18:4318
-      OPENBOT_X11_DISPLAY: :99
-      OPENBOT_X11_SCREENS: 2
-      OPENBOT_X11_GEOMETRY: 1920x1080x24
-      OPENBOT_X11_VIEWER_BASE_URL: http://100.68.65.17
+      SLOPBOT_HOST: 0.0.0.0
+      SLOPBOT_WORKSPACE: /workspace
+      SLOPBOT_DATA_DIR: /data
+      SLOPBOT_X11_DISPLAY: :99
+      SLOPBOT_X11_SCREENS: 2
+      SLOPBOT_X11_GEOMETRY: 1920x1080x24
+      SLOPBOT_LOCAL_COMPUTER_URL: ${SLOPBOT_LOCAL_COMPUTER_URL:-}
+      SLOPBOT_X11_VIEWER_BASE_URL: ${SLOPBOT_X11_VIEWER_BASE_URL:-http://127.0.0.1}
     ports:
-      - 100.68.65.17:4317:4317
-      - 100.68.65.17:6080-6081:6080-6081
+      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:4317:4317
+      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:6080-6081:6080-6081
     security_opt:
       - seccomp=unconfined
     shm_size: 1gb
     volumes:
-      - ./codex:/codex
       - ./data:/data
       - ./workspace:/workspace
     healthcheck:

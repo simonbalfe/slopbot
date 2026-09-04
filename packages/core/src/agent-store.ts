@@ -12,8 +12,8 @@ import {
   MessageIdSchema,
 } from "./agent-types.ts";
 import type { AgentId, AgentMessage, AgentProfile, MessageEnvelope } from "./agent-types.ts";
-import { ThreadIdSchema } from "./codex-app-server.ts";
-import type { ThreadId } from "./codex-app-server.ts";
+import { ThreadIdSchema } from "./runtime-types.ts";
+import type { ThreadId } from "./runtime-types.ts";
 
 const StoredAgentRowSchema = z.object({
   id: AgentIdSchema,

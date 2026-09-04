@@ -9,10 +9,10 @@ import { z } from "zod";
 import {
   LocalComputerRequestSchema,
   LocalComputerResultSchema,
-} from "../src/local-computer.ts";
-import type { LocalComputerRequest, LocalComputerResult } from "../src/local-computer.ts";
+} from "slopbot/local-computer";
+import type { LocalComputerRequest, LocalComputerResult } from "slopbot/local-computer";
 
-const port = z.coerce.number().int().min(1).max(65_535).parse(process.env["OPENBOT_LOCAL_PORT"] ?? 4318);
+const port = z.coerce.number().int().min(1).max(65_535).parse(process.env["SLOPBOT_LOCAL_PORT"] ?? 4318);
 const maxFileBytes = 64 * 1_024;
 
 function tailscaleAddress(): string | undefined {
@@ -46,7 +46,7 @@ async function approved(request: LocalComputerRequest): Promise<boolean> {
   const action = request.operation.tool === "read_file" ? "read a file" : "list a directory";
   const result = await dialog.showMessageBox({
     type: "question",
-    title: "OpenBot local computer access",
+    title: "SlopBot local computer access",
     message: `${request.agentName} wants to ${action}`,
     detail: request.operation.path,
     buttons: ["Deny", "Allow once"],
@@ -108,12 +108,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 }
 
 export function startLocalComputer(): Server | undefined {
-  const hostname = process.env["OPENBOT_LOCAL_HOST"] ?? tailscaleAddress();
+  const hostname = process.env["SLOPBOT_LOCAL_HOST"] ?? tailscaleAddress();
   if (!hostname) {
-    console.warn("OpenBot local computer access is disabled because Tailscale is unavailable");
+    console.warn("SlopBot local computer access is disabled because Tailscale is unavailable");
     return undefined;
   }
   const server = createServer((request, response) => void handle(request, response));
-  server.listen(port, hostname, () => console.log(`OpenBot local computer: http://${hostname}:${port}`));
+  server.listen(port, hostname, () => console.log(`SlopBot local computer: http://${hostname}:${port}`));
   return server;
 }

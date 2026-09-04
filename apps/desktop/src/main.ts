@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { join } from "node:path";
 import { app, BrowserWindow } from "electron";
 
 import { startLocalComputer } from "./local-computer.ts";
 
 const port = 4317;
-const remoteUrl = process.env["OPENBOT_SERVER_URL"];
+const remoteUrl = process.env["SLOPBOT_SERVER_URL"];
 const url = remoteUrl ? new URL(remoteUrl).toString().replace(/\/$/, "") : `http://127.0.0.1:${port}`;
 let backend: ChildProcess | undefined;
 let localComputer: ReturnType<typeof startLocalComputer>;
@@ -23,15 +24,15 @@ async function waitForServer(): Promise<void> {
     if (await serverIsReady()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("OpenBot server did not start");
+  throw new Error("SlopBot server did not start");
 }
 
 async function startBackend(): Promise<void> {
   if (await serverIsReady()) return;
-  if (remoteUrl) throw new Error(`OpenBot server is unavailable: ${url}`);
-  backend = spawn("bun", ["server.ts"], {
-    cwd: app.getAppPath(),
-    env: { ...process.env, OPENBOT_DATA_DIR: app.getPath("userData"), PORT: String(port) },
+  if (remoteUrl) throw new Error(`SlopBot server is unavailable: ${url}`);
+  backend = spawn("bun", ["src/index.ts"], {
+    cwd: join(app.getAppPath(), "..", "server"),
+    env: { ...process.env, SLOPBOT_DATA_DIR: app.getPath("userData"), PORT: String(port) },
     stdio: "inherit",
   });
   await waitForServer();
@@ -45,7 +46,7 @@ async function createWindow(): Promise<void> {
     minWidth: 760,
     minHeight: 560,
     backgroundColor: "#090b0d",
-    title: "OpenBot",
+    title: "SlopBot",
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
