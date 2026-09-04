@@ -48,6 +48,18 @@ export const ThreadOptionsSchema = z.object({
   dynamicTools: z.array(DynamicToolSchema).optional(),
 });
 export const PiRuntimeOptionsSchema = z.object({ cwd: z.string().min(1) });
+export const PiAuthStateSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("authenticated") }),
+  z.object({ status: z.literal("unauthenticated") }),
+  z.object({ status: z.literal("starting"), message: z.string() }),
+  z.object({
+    status: z.literal("pending"),
+    verificationUri: z.url(),
+    userCode: z.string().min(1),
+    expiresInSeconds: z.number().positive().optional(),
+  }),
+  z.object({ status: z.literal("error"), message: z.string() }),
+]);
 
 const ToolResultSchema = z.object({
   contentItems: z.array(z.object({ text: z.string() })),
@@ -73,6 +85,7 @@ export type RuntimeRequest = RuntimeNotification;
 export type RuntimeRequestHandler = (request: RuntimeRequest) => Promise<JsonObject>;
 export type RuntimeNotificationHandler = (notification: RuntimeNotification) => void;
 export type PiRuntimeOptions = Readonly<z.infer<typeof PiRuntimeOptionsSchema>>;
+export type PiAuthState = Readonly<z.infer<typeof PiAuthStateSchema>>;
 export { SandboxModeSchema, ThreadIdSchema } from "./runtime-types.ts";
 export type { SandboxMode, ThreadId } from "./runtime-types.ts";
 
@@ -82,6 +95,9 @@ type ManagedSession = Readonly<{
 }>;
 
 export class PiRuntime {
+  private authController: AbortController | undefined;
+  private authLogin: Promise<void> | undefined;
+  private authState: PiAuthState = { status: "unauthenticated" };
   private readonly notifications = new Set<RuntimeNotificationHandler>();
   private readonly options: PiRuntimeOptions;
   private readonly sessions = new Map<ThreadId, ManagedSession>();
@@ -100,11 +116,57 @@ export class PiRuntime {
   }
 
   close(): void {
+    this.authController?.abort();
     for (const managed of this.sessions.values()) {
       managed.unsubscribe();
       managed.session.dispose();
     }
     this.sessions.clear();
+  }
+
+  async getAuthState(): Promise<PiAuthState> {
+    if (this.authLogin) return this.authState;
+    const authenticated = Boolean(await this.modelRuntime?.getAuth("openai-codex"));
+    this.authState = authenticated ? { status: "authenticated" } : { status: "unauthenticated" };
+    return this.authState;
+  }
+
+  async startCodexLogin(): Promise<PiAuthState> {
+    if ((await this.getAuthState()).status === "authenticated" || this.authLogin) return this.authState;
+    const modelRuntime = this.modelRuntime;
+    if (!modelRuntime) throw new Error("Pi runtime is not connected");
+    const controller = new AbortController();
+    this.authController = controller;
+    this.authState = { status: "starting", message: "Starting OpenAI Codex login" };
+    this.authLogin = modelRuntime.login("openai-codex", "oauth", {
+      signal: controller.signal,
+      prompt: async (prompt) => {
+        if (prompt.type === "select") {
+          const device = prompt.options.find((option) => option.id.includes("device") || option.label.toLowerCase().includes("device"));
+          if (device) return device.id;
+        }
+        throw new Error("OpenAI Codex device login requested unsupported input");
+      },
+      notify: (event) => {
+        if (event.type === "device_code") {
+          this.authState = {
+            status: "pending",
+            verificationUri: event.verificationUri,
+            userCode: event.userCode,
+            ...(event.expiresInSeconds ? { expiresInSeconds: event.expiresInSeconds } : {}),
+          };
+        } else if (event.type === "progress" || event.type === "info") {
+          this.authState = { status: "starting", message: event.message };
+        }
+      },
+    }).then(
+      () => { this.authState = { status: "authenticated" }; },
+      (error: unknown) => { this.authState = { status: "error", message: errorMessage(error) }; },
+    ).finally(() => {
+      this.authController = undefined;
+      this.authLogin = undefined;
+    });
+    return this.authState;
   }
 
   onNotification(handler: RuntimeNotificationHandler): () => void {

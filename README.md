@@ -70,10 +70,9 @@ Open `http://127.0.0.1:4317` for the local UI.
 
 ```sh
 docker compose up -d --build
-docker compose run --rm --entrypoint /app/packages/core/node_modules/.bin/pi slopbot
 ```
 
-In Pi, run `/login` and choose ChatGPT Plus/Pro (Codex). The OAuth tokens are stored under the existing `data` volume and refreshed by Pi.
+SlopBot prompts for ChatGPT Plus/Pro authentication before showing the agents. The OAuth tokens are stored under the existing `data` volume and refreshed by Pi.
 
 Open `http://127.0.0.1:4317`. LEAD and WORKER are viewable at `http://127.0.0.1:6080/vnc.html` and `http://127.0.0.1:6081/vnc.html`.
 

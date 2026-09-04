@@ -64,6 +64,8 @@ async function route(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean);
 
+  if (url.pathname === "/api/auth/codex" && request.method === "GET") return Response.json(await runtime.getAuthState());
+  if (url.pathname === "/api/auth/codex" && request.method === "POST") return Response.json(await runtime.startCodexLogin(), { status: 202 });
   if (url.pathname === "/api/agents" && request.method === "GET") return Response.json(agents.listAgents());
   if (url.pathname === "/api/skills" && request.method === "GET") return Response.json(agents.listSkills());
 
