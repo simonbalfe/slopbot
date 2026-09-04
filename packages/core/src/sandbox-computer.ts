@@ -43,8 +43,6 @@ export class SandboxComputer {
     }
   }
 
-  close(): void {}
-
   get screenCount(): number {
     return this.browsers.length;
   }
@@ -53,9 +51,9 @@ export class SandboxComputer {
     const publicUrl = this.options.publicUrls[screen];
     if (!publicUrl) throw new Error("No sandbox browser available");
     return DesktopAssignmentSchema.parse({
-      computerId: "agent-infra",
+      computerId: "slopbot-browser",
       screen,
-      viewerUrl: `${publicUrl.replace(/\/$/, "")}/vnc/index.html?autoconnect=true`,
+      viewerUrl: `${publicUrl.replace(/\/$/, "")}/vnc/vnc.html`,
     });
   }
 

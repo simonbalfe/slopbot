@@ -14,10 +14,10 @@ Status labels: **Done** is working now, **Partial** has a usable foundation but 
 |---|---|---|
 | Interface | Partial | React chat, agent status, settings, and live browser views |
 | Identity | Strong | Stable IDs, profiles, aliases, roles, private Pi sessions, and transcript ownership |
-| Messaging | Partial | Durable SQLite envelopes, FIFO inboxes, visible inbound and outbound records, hidden wakes, and restart recovery |
+| Messaging | Strong | Durable correlated envelopes, FIFO inboxes, bounded retries, completion state, visible delivery status, hidden wakes, and restart recovery |
 | Orchestration | Basic | One serial run per agent with `idle`, `running`, and `error` state |
 | Memory | Missing | Pi transcripts persist, but there is no separate durable memory service |
-| Computer | Strong | One Agent Infra browser sandbox and persistent login profile per assigned agent; workspace files remain shared |
+| Computer | Strong | One SlopBot-owned browser runtime and persistent login profile per assigned agent; workspace files remain shared |
 | Permissions | Weak | Tool schemas validate input, but runtime approval is `never` and browser-enabled agents currently receive full container access |
 | Model | Partial | Pi wraps the OpenAI Codex provider, but SlopBot does not yet expose a provider-neutral adapter contract |
 
@@ -25,12 +25,12 @@ Status labels: **Done** is working now, **Partial** has a usable foundation but 
 
 Make the existing mailroom trustworthy before adding more coordination primitives.
 
-- **Todo:** Add a parent or correlation ID so replies can be tied to the request that caused them.
-- **Partial:** SQLite tracks `queued`, `processing`, `delivered`, and `failed`, but currently marks delivery when a turn starts rather than completes.
-- **Partial:** Processing messages are recovered after restart, but there is no bounded retry count or processing lease.
-- **Partial:** Peer wakes request material results and prohibit receipt acknowledgements, but do not require a result, failure, or pass response.
-- **Todo:** Surface queue and delivery state in the UI.
-- **Todo:** Add integration tests covering send, wake, reply, restart recovery, deduplication, and failure.
+- **Done:** Replies carry the parent message ID that caused them.
+- **Done:** SQLite distinguishes accepted, running, completed, and failed delivery; completion is recorded only after the turn completes.
+- **Done:** Running messages have a five-minute lease, a three-attempt limit, and restart recovery.
+- **Done:** Peer requests require one correlated result, failure, or pass response and reject duplicate results.
+- **Done:** The chat UI shows accepted, running, completed, and failed message state.
+- **Partial:** The SQLite integration test covers correlation, persistence, bounded retries, and deduplication. A live Pi wake and restart pass was verified manually; automating that runtime path remains.
 
 Acceptance:
 
@@ -72,7 +72,7 @@ Acceptance:
 - **Todo:** Replace blanket runtime approval with `always`, `ask`, and `never` policies.
 - **Todo:** Add scoped `allow once`, `deny`, `always allow`, and `never allow` decisions.
 - **Todo:** Bind approvals to agent, action, target, run, and expiry.
-- **Done:** Agent actions run in Docker and Agent Infra sandboxes; no tool currently exposes the user's Mac directly.
+- **Done:** Agent actions run in SlopBot-owned Docker browser runtimes; no tool currently exposes the user's Mac directly.
 - **Partial:** Typed schemas validate host tool calls, but side effects and authorization decisions are not stored in an audit log.
 
 Acceptance:
@@ -93,7 +93,7 @@ Use rooms only for multi-party judgment. Keep clear handoffs as direct messages.
 
 ## Milestone 6: scalable agents and work surfaces
 
-- **Partial:** The typed API can create agents, but the UI cannot manage them and edit, disable, and delete are missing.
+- **Todo:** Let users create, edit, disable, and delete agents through the typed API and UI.
 - **Todo:** Provision or queue browser sandboxes when agent count exceeds current capacity.
 - **Partial:** SQLite persists sandbox assignments and the UI exposes each login view, but capacity and availability are not modelled as states.
 - **Todo:** Add file ownership, worktrees, or locks when agents write concurrently.

@@ -18,25 +18,21 @@ const OptionalStringSchema = z.preprocess(
 
 export const SlopBotEnvSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(4317),
-  SLOPBOT_BIND_ADDRESS: z.string().min(1).default("127.0.0.1"),
   SLOPBOT_HOST: z.string().min(1).default("127.0.0.1"),
   SLOPBOT_WORKSPACE: z.string().min(1).optional(),
-  SLOPBOT_WORKSPACE_PATH: z.string().min(1).default("./workspace"),
   SLOPBOT_DATA_DIR: z.string().min(1).optional(),
   SLOPBOT_SANDBOX_URLS: UrlListSchema.optional(),
   SLOPBOT_SANDBOX_PUBLIC_URLS: UrlListSchema.optional(),
   SLOPBOT_SANDBOX_API_KEY: OptionalStringSchema,
-  PI_CODING_AGENT_DIR: OptionalStringSchema,
 });
 
-export function loadConfig(
-  environment: NodeJS.ProcessEnv = process.env,
-  currentDirectory = process.cwd(),
+function resolveConfig(
+  environment: NodeJS.ProcessEnv,
+  currentDirectory: string,
 ) {
   const env = SlopBotEnvSchema.parse(environment);
   const workspace = env.SLOPBOT_WORKSPACE ?? currentDirectory;
   return {
-    env,
     port: env.PORT,
     hostname: env.SLOPBOT_HOST,
     workspace,
@@ -52,4 +48,11 @@ export function loadConfig(
   };
 }
 
-export type SlopBotConfig = ReturnType<typeof loadConfig>;
+export type SlopBotConfig = ReturnType<typeof resolveConfig>;
+
+export function loadConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+  currentDirectory = process.cwd(),
+): SlopBotConfig {
+  return resolveConfig(environment, currentDirectory);
+}

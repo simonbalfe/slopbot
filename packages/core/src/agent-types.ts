@@ -13,7 +13,7 @@ export const MessageStatusSchema = z.enum([
   "failed",
 ]);
 export const DesktopAssignmentSchema = z.object({
-  computerId: z.literal("agent-infra"),
+  computerId: z.literal("slopbot-browser"),
   screen: z.number().int().nonnegative(),
   viewerUrl: z.url().nullable(),
 });
@@ -29,11 +29,15 @@ export const MessageEnvelopeSchema = z.object({
   id: MessageIdSchema,
   senderId: AgentIdSchema.nullable(),
   recipientId: AgentIdSchema,
+  parentId: MessageIdSchema.nullable(),
+  replyRequired: z.coerce.boolean(),
   text: textSchema(8_000),
   skillName: textSchema(100).nullable(),
   status: MessageStatusSchema,
+  attemptCount: z.number().int().nonnegative(),
   createdAt: z.iso.datetime(),
   deliveredAt: z.iso.datetime().nullable(),
+  leaseExpiresAt: z.iso.datetime().nullable(),
   turnId: z.string().nullable(),
 });
 export const AgentMessageSchema = z.object({

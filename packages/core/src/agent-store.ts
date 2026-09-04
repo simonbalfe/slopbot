@@ -36,6 +36,8 @@ export type StoredAgent = Readonly<{
 type QueueMessageInput = Readonly<{
   senderId: AgentId | null;
   recipientId: AgentId;
+  parentId: MessageEnvelope["parentId"];
+  replyRequired: boolean;
   text: string;
   skillName: string | null;
 }>;
@@ -60,15 +62,23 @@ export class AgentStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS retired_agents (
+        id TEXT PRIMARY KEY,
+        retired_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS message_envelopes (
         id TEXT PRIMARY KEY,
         sender_id TEXT REFERENCES agents(id),
         recipient_id TEXT NOT NULL REFERENCES agents(id),
+        parent_id TEXT REFERENCES message_envelopes(id),
+        reply_required INTEGER NOT NULL DEFAULT 0 CHECK(reply_required IN (0, 1)),
         text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND 8000),
         skill_name TEXT,
         status TEXT NOT NULL CHECK(status IN ('queued', 'processing', 'delivered', 'failed')),
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
         created_at TEXT NOT NULL,
         delivered_at TEXT,
+        lease_expires_at TEXT,
         turn_id TEXT
       );
       CREATE INDEX IF NOT EXISTS message_inbox ON message_envelopes(recipient_id, status, created_at);
@@ -94,6 +104,25 @@ export class AgentStore {
     if (!columns.some(({ name }) => name === "thread_config")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN thread_config TEXT");
     }
+    const messageColumns = ColumnSchema.array().parse(
+      this.database.query("PRAGMA table_info(message_envelopes)").all(),
+    );
+    if (!messageColumns.some(({ name }) => name === "parent_id"))
+      this.database.exec(
+        "ALTER TABLE message_envelopes ADD COLUMN parent_id TEXT REFERENCES message_envelopes(id)",
+      );
+    if (!messageColumns.some(({ name }) => name === "reply_required"))
+      this.database.exec(
+        "ALTER TABLE message_envelopes ADD COLUMN reply_required INTEGER NOT NULL DEFAULT 0 CHECK(reply_required IN (0, 1))",
+      );
+    if (!messageColumns.some(({ name }) => name === "attempt_count"))
+      this.database.exec(
+        "ALTER TABLE message_envelopes ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0)",
+      );
+    if (!messageColumns.some(({ name }) => name === "lease_expires_at"))
+      this.database.exec(
+        "ALTER TABLE message_envelopes ADD COLUMN lease_expires_at TEXT",
+      );
   }
 
   close(): void {
@@ -101,11 +130,54 @@ export class AgentStore {
   }
 
   upsertProfiles(profiles: readonly AgentProfile[]): void {
-    for (const profile of profiles) this.saveProfile(profile, null);
+    for (const profile of profiles) {
+      if (!this.isRetired(profile.id) && !this.getAgent(profile.id))
+        this.saveProfile(profile, null);
+    }
   }
 
-  saveAgent(profile: AgentProfile, threadId: ThreadId, threadConfig: string): void {
-    this.saveProfile(profile, threadId, threadConfig);
+  createProfile(profile: AgentProfile): StoredAgent {
+    const validated = AgentProfileSchema.parse(profile);
+    if (this.getAgent(validated.id)) throw new Error("Agent ID already exists");
+    this.database.query("DELETE FROM retired_agents WHERE id = ?").run(validated.id);
+    this.saveProfile(validated, null);
+    const stored = this.getAgent(validated.id);
+    if (!stored) throw new Error("Agent was not created");
+    return stored;
+  }
+
+  hasPendingMessages(agentId: AgentId): boolean {
+    return Boolean(
+      this.database.query(`
+        SELECT 1 FROM message_envelopes
+        WHERE (sender_id = ? OR recipient_id = ?)
+          AND status IN ('queued', 'processing')
+        LIMIT 1
+      `).get(agentId, agentId),
+    );
+  }
+
+  deleteAgent(agentId: AgentId, retire = true): void {
+    const remove = this.database.transaction(() => {
+      if (retire)
+        this.database.query(`
+          INSERT INTO retired_agents (id, retired_at) VALUES (?, ?)
+          ON CONFLICT(id) DO UPDATE SET retired_at = excluded.retired_at
+        `).run(agentId, new Date().toISOString());
+      this.database.query(`
+        DELETE FROM transcript_events
+        WHERE agent_id = ? OR message_id IN (
+          SELECT id FROM message_envelopes
+          WHERE sender_id = ? OR recipient_id = ?
+        )
+      `).run(agentId, agentId, agentId);
+      this.database.query(
+        "DELETE FROM message_envelopes WHERE sender_id = ? OR recipient_id = ?",
+      ).run(agentId, agentId);
+      this.database.query("DELETE FROM desktop_assignments WHERE agent_id = ?").run(agentId);
+      this.database.query("DELETE FROM agents WHERE id = ?").run(agentId);
+    });
+    remove();
   }
 
   setThread(agentId: AgentId, threadId: ThreadId, threadConfig: string): void {
@@ -130,7 +202,7 @@ export class AgentStore {
     `).all().map((row) => this.parseAgent(row));
   }
 
-  assignDesktop(agentId: AgentId, screenCount: number): number {
+  assignDesktop(agentId: AgentId, screenCount: number): number | undefined {
     const existing = this.database.query("SELECT screen FROM desktop_assignments WHERE agent_id = ?").get(agentId);
     const existingScreen = z.object({ screen: z.number().int().nonnegative() }).safeParse(existing);
     if (existingScreen.success) return this.desktopScreen(existingScreen.data.screen, screenCount);
@@ -138,7 +210,7 @@ export class AgentStore {
     const usedScreens = new Set(this.database.query("SELECT screen FROM desktop_assignments").all()
       .map((row) => z.object({ screen: z.number().int().nonnegative() }).parse(row).screen));
     const screen = Array.from({ length: screenCount }, (_, index) => index).find((index) => !usedScreens.has(index));
-    if (screen === undefined) throw new Error("All X11 screens are assigned");
+    if (screen === undefined) return undefined;
     this.database.query("INSERT INTO desktop_assignments (agent_id, screen, created_at) VALUES (?, ?, ?)")
       .run(agentId, screen, new Date().toISOString());
     return screen;
@@ -155,21 +227,27 @@ export class AgentStore {
       ...input,
       status: "queued",
       createdAt: new Date().toISOString(),
+      attemptCount: 0,
       deliveredAt: null,
+      leaseExpiresAt: null,
       turnId: null,
     });
     const commit = this.database.transaction(() => {
       this.database.query(`
         INSERT INTO message_envelopes
-          (id, sender_id, recipient_id, text, skill_name, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+          (id, sender_id, recipient_id, parent_id, reply_required, text,
+           skill_name, status, attempt_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         message.id,
         message.senderId,
         message.recipientId,
+        message.parentId,
+        message.replyRequired ? 1 : 0,
         message.text,
         message.skillName,
         message.status,
+        message.attemptCount,
         message.createdAt,
       );
       if (message.senderId) this.insertMessageEvent(message.senderId, message, "outbound");
@@ -183,21 +261,40 @@ export class AgentStore {
     return MessageEnvelopeSchema.array().parse(this.database.query(`
       SELECT
         id, sender_id AS senderId, recipient_id AS recipientId, text,
-        skill_name AS skillName, status, created_at AS createdAt,
-        delivered_at AS deliveredAt, turn_id AS turnId
+        parent_id AS parentId, reply_required AS replyRequired,
+        skill_name AS skillName, status, attempt_count AS attemptCount,
+        created_at AS createdAt, delivered_at AS deliveredAt,
+        lease_expires_at AS leaseExpiresAt, turn_id AS turnId
       FROM message_envelopes WHERE status = 'processing'
       ORDER BY created_at, id
     `).all());
   }
 
-  requeueMessage(messageId: string): void {
-    this.database.query("UPDATE message_envelopes SET status = 'queued' WHERE id = ? AND status = 'processing'")
-      .run(messageId);
+  requeueMessage(messageId: string, retryLimit: number): boolean {
+    const result = this.database
+      .query(
+        "UPDATE message_envelopes SET status = 'queued', lease_expires_at = NULL WHERE id = ? AND status = 'processing' AND attempt_count < ?",
+      )
+      .run(messageId, retryLimit);
+    if (result.changes > 0) return true;
+    this.markFailed(messageId);
+    return false;
+  }
+
+  hasReply(messageId: string): boolean {
+    return Boolean(
+      this.database
+        .query("SELECT 1 FROM message_envelopes WHERE parent_id = ? LIMIT 1")
+        .get(messageId),
+    );
   }
 
   claimNextMessage(agentId: AgentId): MessageEnvelope | undefined {
+    const leaseExpiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
     const row = this.database.query(`
-      UPDATE message_envelopes SET status = 'processing'
+      UPDATE message_envelopes
+      SET status = 'processing', attempt_count = attempt_count + 1,
+        lease_expires_at = ?
       WHERE id = (
         SELECT id FROM message_envelopes
         WHERE recipient_id = ? AND status = 'queued'
@@ -205,22 +302,34 @@ export class AgentStore {
       )
       RETURNING
         id, sender_id AS senderId, recipient_id AS recipientId, text,
-        skill_name AS skillName, status, created_at AS createdAt,
-        delivered_at AS deliveredAt, turn_id AS turnId
-    `).get(agentId);
+        parent_id AS parentId, reply_required AS replyRequired,
+        skill_name AS skillName, status, attempt_count AS attemptCount,
+        created_at AS createdAt, delivered_at AS deliveredAt,
+        lease_expires_at AS leaseExpiresAt, turn_id AS turnId
+    `).get(leaseExpiresAt, agentId);
     return row ? MessageEnvelopeSchema.parse(row) : undefined;
   }
 
-  markDelivered(messageId: string, turnId: string | null): void {
+  setTurn(messageId: string, turnId: string): void {
+    this.database
+      .query("UPDATE message_envelopes SET turn_id = ? WHERE id = ?")
+      .run(turnId, messageId);
+  }
+
+  markCompleted(messageId: string): void {
     this.database.query(`
       UPDATE message_envelopes
-      SET status = 'delivered', delivered_at = ?, turn_id = ?
+      SET status = 'delivered', delivered_at = ?, lease_expires_at = NULL
       WHERE id = ?
-    `).run(new Date().toISOString(), turnId, messageId);
+    `).run(new Date().toISOString(), messageId);
   }
 
   markFailed(messageId: string): void {
-    this.database.query("UPDATE message_envelopes SET status = 'failed' WHERE id = ?").run(messageId);
+    this.database
+      .query(
+        "UPDATE message_envelopes SET status = 'failed', lease_expires_at = NULL WHERE id = ?",
+      )
+      .run(messageId);
   }
 
   clearAgentChat(agentId: AgentId): void {
@@ -254,19 +363,6 @@ export class AgentStore {
       FROM transcript_events e
       LEFT JOIN message_envelopes m ON m.id = e.message_id
       WHERE e.agent_id = ?
-      ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1
-    `).get(agentId);
-    return row ? AgentMessageSchema.parse(row) : undefined;
-  }
-
-  lastAssistantMessage(agentId: AgentId): AgentMessage | undefined {
-    const row = this.database.query(`
-      SELECT
-        e.id, e.agent_id AS agentId, e.message_id AS messageId, e.role, e.direction,
-        e.text, e.sender_id AS senderId, e.recipient_id AS recipientId,
-        e.created_at AS createdAt, NULL AS status
-      FROM transcript_events e
-      WHERE e.agent_id = ? AND e.role = 'assistant'
       ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1
     `).get(agentId);
     return row ? AgentMessageSchema.parse(row) : undefined;
@@ -320,6 +416,12 @@ export class AgentStore {
       threadConfig,
       now,
       now,
+    );
+  }
+
+  private isRetired(agentId: AgentId): boolean {
+    return Boolean(
+      this.database.query("SELECT 1 FROM retired_agents WHERE id = ?").get(agentId),
     );
   }
 

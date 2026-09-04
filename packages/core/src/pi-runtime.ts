@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -48,6 +50,11 @@ export const ThreadOptionsSchema = z.object({
   dynamicTools: z.array(DynamicToolSchema).optional(),
 });
 export const PiRuntimeOptionsSchema = z.object({ cwd: z.string().min(1) });
+export const CreateSkillInputSchema = z.object({
+  name: z.string().trim().toLowerCase().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  description: z.string().trim().min(1).max(500),
+  content: z.string().trim().min(1).max(20_000),
+});
 export const PiAuthStateSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("authenticated") }),
   z.object({ status: z.literal("unauthenticated") }),
@@ -71,6 +78,7 @@ export type ApprovalPolicy = z.infer<typeof ApprovalPolicySchema>;
 export type Skill = Readonly<{
   name: string;
   description: string;
+  content: string;
   path: string;
   enabled: boolean;
   cwd: string;
@@ -85,6 +93,7 @@ export type RuntimeRequest = RuntimeNotification;
 export type RuntimeRequestHandler = (request: RuntimeRequest) => Promise<JsonObject>;
 export type RuntimeNotificationHandler = (notification: RuntimeNotification) => void;
 export type PiRuntimeOptions = Readonly<z.infer<typeof PiRuntimeOptionsSchema>>;
+export type CreateSkillInput = Readonly<z.infer<typeof CreateSkillInputSchema>>;
 export type PiAuthState = Readonly<z.infer<typeof PiAuthStateSchema>>;
 export { SandboxModeSchema, ThreadIdSchema } from "./runtime-types.ts";
 export type { SandboxMode, ThreadId } from "./runtime-types.ts";
@@ -189,12 +198,46 @@ export class PiRuntime {
       skills.push(...loader.getSkills().skills.map((skill) => ({
         name: skill.name,
         description: skill.description,
+        content: readFileSync(skill.filePath, "utf8"),
         path: skill.filePath,
         enabled: true,
         cwd,
       })));
     }
     return skills;
+  }
+
+  async createSkill(input: CreateSkillInput): Promise<Skill> {
+    const parsed = CreateSkillInputSchema.parse(input);
+    const skillsDirectory = join(getAgentDir(), "skills");
+    const skillDirectory = join(skillsDirectory, parsed.name);
+    if (existsSync(skillDirectory)) throw new Error("Skill already exists");
+    mkdirSync(skillsDirectory, { recursive: true });
+    mkdirSync(skillDirectory);
+    try {
+      writeFileSync(
+        join(skillDirectory, "SKILL.md"),
+        `---\nname: ${parsed.name}\ndescription: ${JSON.stringify(parsed.description)}\n---\n\n${parsed.content}\n`,
+        { encoding: "utf8", flag: "wx" },
+      );
+      const skill = (await this.listSkills([this.options.cwd], true)).find(
+        (item) => item.name === parsed.name,
+      );
+      if (!skill) throw new Error("Pi did not load the new skill");
+      return skill;
+    } catch (error) {
+      rmSync(skillDirectory, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  discardThread(threadId: ThreadId): void {
+    const parsedId = ThreadIdSchema.parse(threadId);
+    const managed = this.sessions.get(parsedId);
+    if (!managed) return;
+    managed.unsubscribe();
+    managed.session.dispose();
+    this.sessions.delete(parsedId);
   }
 
   async startThread(options: ThreadOptions): Promise<ThreadId> {

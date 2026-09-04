@@ -1,33 +1,42 @@
 x-sandbox: &sandbox
-  image: ghcr.io/agent-infra/sandbox:1.11.0
+  image: slopbot-browser:local
+  build:
+    context: .
+    dockerfile: packages/browser-runtime/Dockerfile
   restart: unless-stopped
-  entrypoint: ["/bin/sh", "-c"]
-  command:
-    - "mkdir -p /home/gem/.config/browser && chown -R 1000:1000 /home/gem/.config && rm -f /home/gem/.config/browser/Singleton* && exec /opt/gem/run.sh"
-  security_opt:
-    - seccomp=unconfined
   shm_size: 2gb
-  environment:
+  environment: &sandbox-environment
     SANDBOX_API_KEY: ${SLOPBOT_SANDBOX_API_KEY:-}
-    WORKSPACE: /home/gem/workspace
+    BROWSER_PROFILE_DIR: /data/browser
+    BROWSER_WORKSPACE: /workspace
 services:
   sandbox-lead:
     <<: *sandbox
     container_name: slopbot-sandbox-lead
     ports:
       - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:6080:8080
+      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:${SLOPBOT_LEAD_CDP_PORT:-9222}:9322
+    environment:
+      <<: *sandbox-environment
+      BROWSER_CDP_PORT: ${SLOPBOT_LEAD_CDP_PORT:-9222}
+      BROWSER_CDP_PUBLIC_URL: http://127.0.0.1:${SLOPBOT_LEAD_CDP_PORT:-9222}
     volumes:
-      - ${SLOPBOT_WORKSPACE_PATH:-./workspace}:/home/gem/workspace
-      - sandbox-lead-profile:/home/gem/.config/browser
+      - ${SLOPBOT_WORKSPACE_PATH:-./workspace}:/workspace
+      - sandbox-lead-profile:/data/browser
 
   sandbox-worker:
     <<: *sandbox
     container_name: slopbot-sandbox-worker
     ports:
       - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:6081:8080
+      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:${SLOPBOT_WORKER_CDP_PORT:-9223}:9322
+    environment:
+      <<: *sandbox-environment
+      BROWSER_CDP_PORT: ${SLOPBOT_WORKER_CDP_PORT:-9223}
+      BROWSER_CDP_PUBLIC_URL: http://127.0.0.1:${SLOPBOT_WORKER_CDP_PORT:-9223}
     volumes:
-      - ${SLOPBOT_WORKSPACE_PATH:-./workspace}:/home/gem/workspace
-      - sandbox-worker-profile:/home/gem/.config/browser
+      - ${SLOPBOT_WORKSPACE_PATH:-./workspace}:/workspace
+      - sandbox-worker-profile:/data/browser
 
   slopbot:
     build: .
@@ -45,12 +54,15 @@ services:
       SLOPBOT_SANDBOX_URLS: http://sandbox-lead:8080,http://sandbox-worker:8080
       SLOPBOT_SANDBOX_PUBLIC_URLS: http://127.0.0.1:6080,http://127.0.0.1:6081
       SLOPBOT_SANDBOX_API_KEY: ${SLOPBOT_SANDBOX_API_KEY:-}
+      LEADS_API_URL: ${LEADS_API_URL:-}
     ports:
       - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:${PORT:-4317}:${PORT:-4317}
     security_opt:
       - seccomp=unconfined
     volumes:
       - ./data:/data
+      - ./data/bin/leads:/usr/local/bin/leads:ro
+      - ${CODEX_HOME}/skills/gmaps-leads-cli:/data/pi/skills/gmaps-leads-cli:ro
       - ${SLOPBOT_WORKSPACE_PATH:-./workspace}:/workspace
     healthcheck:
       test:

@@ -1,15 +1,13 @@
-import { SandboxClient } from "@agent-infra/sandbox";
 import { z } from "zod";
 
-import { errorMessage, textSchema } from "./protocol.ts";
+import { textSchema } from "./protocol.ts";
 
 const PointSchema = z.number().finite().min(0).max(16_384);
 const ResponseSchema = z.object({
-  success: z.boolean().optional(),
+  success: z.boolean(),
   message: z.string().optional(),
   data: z.unknown().optional(),
 });
-const TextResponseSchema = ResponseSchema.extend({ data: z.string() });
 
 export const BrowserArgumentsSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("navigate"), url: z.url() }),
@@ -42,136 +40,109 @@ export const BrowserInputSchema = z.discriminatedUnion("type", [
 export type BrowserArguments = Readonly<z.infer<typeof BrowserArgumentsSchema>>;
 export type BrowserInput = Readonly<z.infer<typeof BrowserInputSchema>>;
 
-type SdkResponse<T> =
-  Readonly<{ ok: true; body: T }> | Readonly<{ ok: false; error: unknown }>;
-
-function responseBody<T>(response: SdkResponse<T>): T {
-  if (!response.ok) throw new Error(errorMessage(response.error));
-  return response.body;
-}
-
 function responseText(value: unknown): string {
-  const response = ResponseSchema.parse(value);
-  if (response.success === false)
-    throw new Error(response.message ?? "Sandbox browser request failed");
-  if (typeof response.data === "string") return response.data;
-  return response.message ?? JSON.stringify(response.data ?? "ok");
+  if (typeof value === "string") return value;
+  return JSON.stringify(value ?? "ok");
 }
 
 export class SandboxBrowser {
-  private readonly client: SandboxClient;
+  private readonly apiKey: string | undefined;
+  private readonly endpoint: string;
 
   constructor(baseUrl: string, apiKey?: string) {
-    const endpoint = z.url().parse(baseUrl).replace(/\/$/, "");
-    this.client = new SandboxClient({
-      baseUrl: endpoint,
-      environment: endpoint,
-      ...(apiKey ? { headers: { "X-AIO-API-Key": apiKey } } : {}),
-    });
+    this.endpoint = z.url().parse(baseUrl).replace(/\/$/, "");
+    this.apiKey = apiKey;
   }
 
   async connect(): Promise<void> {
-    const response = ResponseSchema.parse(
-      responseBody(await this.client.browser.getInfo()),
-    );
-    if (!response.data) throw new Error("Sandbox browser is unavailable");
+    if (!await this.request("/v1/browser/info"))
+      throw new Error("Sandbox browser is unavailable");
   }
 
   async execute(input: BrowserArguments): Promise<string> {
     switch (input.action) {
       case "navigate":
-        responseText(
-          responseBody(
-            await this.client.browserPage.navigate({ url: input.url }),
-          ),
-        );
+        await this.request("/v1/browser/page/navigate", { url: input.url });
         return `Navigated to ${input.url}`;
       case "snapshot":
-        return TextResponseSchema.parse(
-          responseBody(await this.client.browserPage.getText()),
-        ).data;
+        return z.string().parse(await this.request("/v1/browser/page/text"));
       case "click":
-        responseText(
-          responseBody(
-            await this.client.browserPage.click({ selector: input.selector }),
-          ),
-        );
+        await this.request("/v1/browser/page/click", {
+          selector: input.selector,
+        });
         return `Clicked ${input.selector}`;
       case "type":
-        responseText(
-          responseBody(
-            await this.client.browserPage.fill({
-              selector: input.selector,
-              text: input.text,
-            }),
-          ),
-        );
+        await this.request("/v1/browser/page/fill", {
+          selector: input.selector,
+          text: input.text,
+        });
         return `Typed into ${input.selector}`;
       case "evaluate":
         return responseText(
-          responseBody(
-            await this.client.browserPage.evaluate({
-              expression: input.expression,
-            }),
-          ),
+          await this.request("/v1/browser/page/evaluate", {
+            expression: input.expression,
+          }),
         );
     }
   }
 
   async screenshot(): Promise<Uint8Array> {
-    const binary: unknown = responseBody(
-      await this.client.browserPage.screenshot({ format: "png" }),
-    );
-    if (
-      !binary ||
-      typeof binary !== "object" ||
-      !("arrayBuffer" in binary) ||
-      typeof binary.arrayBuffer !== "function"
-    ) {
-      throw new Error("Sandbox returned an invalid screenshot");
-    }
-    return new Uint8Array(await binary.arrayBuffer());
+    const response = await fetch(`${this.endpoint}/v1/browser/screenshot`, {
+      headers: this.headers(),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok)
+      throw new Error(`Browser screenshot failed: ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   async input(input: BrowserInput): Promise<void> {
     switch (input.type) {
       case "click":
-        responseText(
-          responseBody(
-            await this.client.browserPage.click({
-              x: input.x,
-              y: input.y,
-              button: input.button,
-              click_count: input.clickCount,
-            }),
-          ),
-        );
+        await this.request("/v1/browser/page/click", {
+          x: input.x,
+          y: input.y,
+          button: input.button,
+          click_count: input.clickCount,
+        });
         return;
       case "scroll": {
         const vertical = Math.abs(input.deltaY) >= Math.abs(input.deltaX);
         const delta = vertical ? input.deltaY : input.deltaX;
-        responseText(
-          responseBody(
-            await this.client.browserPage.scroll({
-              direction: vertical
-                ? delta < 0
-                  ? "up"
-                  : "down"
-                : delta < 0
-                  ? "left"
-                  : "right",
-              amount: Math.abs(delta),
-            }),
-          ),
-        );
+        await this.request("/v1/browser/page/scroll", {
+          direction: vertical
+            ? delta < 0
+              ? "up"
+              : "down"
+            : delta < 0
+              ? "left"
+              : "right",
+          amount: Math.abs(delta),
+        });
         return;
       }
       case "key":
-        responseText(
-          responseBody(
-            await this.client.browserPage.pressKey({ key: input.key }),
-          ),
-        );
+        await this.request("/v1/browser/page/press_key", { key: input.key });
     }
+  }
+
+  private headers(): HeadersInit {
+    return this.apiKey ? { "X-AIO-API-Key": this.apiKey } : {};
+  }
+
+  private async request(path: string, body?: unknown): Promise<unknown> {
+    const response = await fetch(`${this.endpoint}${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        ...this.headers(),
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const result = ResponseSchema.parse(await response.json());
+    if (!response.ok || !result.success)
+      throw new Error(result.message ?? `Browser request failed: ${response.status}`);
+    return result.data;
   }
 }

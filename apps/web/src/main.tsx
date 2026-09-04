@@ -8,8 +8,8 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
+import Markdown from "react-markdown";
 
-import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import "./index.css";
 
@@ -39,79 +39,6 @@ function Avatar({
   );
 }
 
-function Inline({ value }: Readonly<{ value: string }>): React.ReactNode {
-  return value
-    .split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g)
-    .map((part, index) => {
-      if (part.startsWith("`"))
-        return (
-          <code
-            className="rounded bg-black/40 px-1 py-0.5 font-mono text-xs"
-            key={index}
-          >
-            {part.slice(1, -1)}
-          </code>
-        );
-      if (part.startsWith("**"))
-        return <strong key={index}>{part.slice(2, -2)}</strong>;
-      if (part.startsWith("*")) return <em key={index}>{part.slice(1, -1)}</em>;
-      return part;
-    });
-}
-
-function Markdown({ value }: Readonly<{ value: string }>): React.ReactNode {
-  return value.split(/\n{2,}/).map((block, index) => {
-    if (block.startsWith("```") && block.endsWith("```"))
-      return (
-        <pre
-          className="my-2 overflow-auto rounded-lg bg-black/40 p-2 text-xs"
-          key={index}
-        >
-          <code>{block.slice(3, -3).trim()}</code>
-        </pre>
-      );
-    const lines = block.split("\n");
-    if (lines.every((line) => /^[-*]\s+/.test(line)))
-      return (
-        <ul className="my-1 list-disc space-y-1 pl-5" key={index}>
-          {lines.map((line) => (
-            <li key={line}>
-              <Inline value={line.replace(/^[-*]\s+/, "")} />
-            </li>
-          ))}
-        </ul>
-      );
-    if (lines.every((line) => /^\d+\.\s+/.test(line)))
-      return (
-        <ol className="my-1 list-decimal space-y-1 pl-5" key={index}>
-          {lines.map((line) => (
-            <li key={line}>
-              <Inline value={line.replace(/^\d+\.\s+/, "")} />
-            </li>
-          ))}
-        </ol>
-      );
-    const heading =
-      lines.length === 1 ? lines[0]?.match(/^(#{1,3})\s+(.+)/) : undefined;
-    if (heading)
-      return (
-        <h3 className="mb-2 text-sm font-semibold" key={index}>
-          <Inline value={heading[2] ?? ""} />
-        </h3>
-      );
-    return (
-      <p className="mb-2 last:mb-0" key={index}>
-        {lines.map((line, lineIndex) => (
-          <span key={line}>
-            {lineIndex > 0 && <br />}
-            <Inline value={line} />
-          </span>
-        ))}
-      </p>
-    );
-  });
-}
-
 function dateKey(value: string): string {
   return new Date(value).toLocaleDateString();
 }
@@ -132,6 +59,17 @@ function dateLabel(value: string): string {
 
 function messageKind(message: Message): string {
   return `${message.role}:${message.direction}`;
+}
+
+function messageStatus(status: Message["status"]): string | undefined {
+  if (status === "queued") return "accepted";
+  if (status === "processing") return "running";
+  if (status === "delivered") return "completed";
+  return status ?? undefined;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
@@ -168,8 +106,17 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
               <div
                 className={`rounded-2xl px-3 py-2.5 ${outbound ? "rounded-tr-md bg-[#37302a]" : "rounded-tl-md bg-[#212123]"}`}
               >
-                <Markdown value={message.text} />
+                <div className="message-markdown">
+                  <Markdown>{message.text}</Markdown>
+                </div>
               </div>
+              {messageStatus(message.status) && (
+                <div
+                  className={`mt-1 text-[10px] uppercase tracking-wide text-muted-foreground ${outbound ? "text-right" : ""}`}
+                >
+                  {messageStatus(message.status)}
+                </div>
+              )}
             </article>
           </div>
         );
@@ -199,6 +146,7 @@ function App(): React.ReactNode {
   const [prompt, setPrompt] = useState("");
   const [screenUrl, setScreenUrl] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
   const viewer = useRef<HTMLImageElement>(null);
   const settings = useRef<HTMLDialogElement>(null);
   const agent = useMemo(
@@ -233,7 +181,13 @@ function App(): React.ReactNode {
     return () => window.clearInterval(timer);
   }, [auth?.status]);
   useEffect(() => {
-    if (!agent?.desktop) return;
+    if (!agent?.desktop) {
+      setScreenUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return "";
+      });
+      return;
+    }
     let cancelled = false;
     const frame = async (): Promise<void> => {
       try {
@@ -275,6 +229,58 @@ function App(): React.ReactNode {
     await api.agents.clear({ agentId: agent.id });
     settings.current?.close();
     await refresh();
+  };
+  const createAgent = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ): Promise<void> => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fields = new FormData(form);
+    setSettingsError("");
+    try {
+      const created = await api.agents.create({
+        id: String(fields.get("id") ?? ""),
+        name: String(fields.get("name") ?? ""),
+        role: String(fields.get("role") ?? ""),
+        instructions: String(fields.get("instructions") ?? ""),
+      });
+      form.reset();
+      setSelectedId(created.id);
+      await refresh();
+    } catch (error) {
+      setSettingsError(errorText(error));
+    }
+  };
+  const deleteAgent = async (target: Agent): Promise<void> => {
+    if (!window.confirm(`Delete ${target.name} and its SlopBot history?`))
+      return;
+    setSettingsError("");
+    try {
+      await api.agents.remove({ agentId: target.id });
+      if (target.id === selectedId) setSelectedId("");
+      await refresh();
+    } catch (error) {
+      setSettingsError(errorText(error));
+    }
+  };
+  const createSkill = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ): Promise<void> => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fields = new FormData(form);
+    setSettingsError("");
+    try {
+      await api.skills.create({
+        name: String(fields.get("name") ?? ""),
+        description: String(fields.get("description") ?? ""),
+        content: String(fields.get("content") ?? ""),
+      });
+      form.reset();
+      await refreshSkills();
+    } catch (error) {
+      setSettingsError(errorText(error));
+    }
   };
   const browserInput = async (input: BrowserInput): Promise<void> => {
     if (agent?.desktop)
@@ -345,16 +351,16 @@ function App(): React.ReactNode {
               </p>
             </div>
           ) : (
-            <Button
+            <button
+              type="button"
               className="mt-6 h-auto w-full rounded-xl bg-brand px-4 py-3 font-semibold text-zinc-900 disabled:opacity-50"
-              variant="ghost"
               disabled={auth.status === "starting"}
               onClick={() => void login()}
             >
               {auth.status === "starting"
                 ? auth.message
                 : "Connect ChatGPT Plus / Pro"}
-            </Button>
+            </button>
           )}
           {auth.status === "error" && (
             <p className="mt-4 text-sm text-red-300">{auth.message}</p>
@@ -398,6 +404,12 @@ function App(): React.ReactNode {
             </span>
           </button>
         ))}
+        <button
+          className="mt-2 w-full rounded-xl border border-dashed border-line p-2 text-sm text-muted-foreground hover:text-zinc-100"
+          onClick={() => settings.current?.showModal()}
+        >
+          + New bot
+        </button>
       </aside>
       <section className="grid min-h-0 min-w-0 grid-rows-[auto_1fr_auto] overflow-hidden">
         <header className="flex items-center justify-between border-b border-line px-6 py-4">
@@ -426,13 +438,13 @@ function App(): React.ReactNode {
               onChange={(event) => setPrompt(event.target.value)}
               placeholder="Message agent"
             />
-            <Button
+            <button
+              type="submit"
               className="h-auto rounded-xl bg-brand px-4 font-semibold text-zinc-900 disabled:opacity-40"
               disabled={agent.status === "running"}
-              variant="ghost"
             >
               Send
-            </Button>
+            </button>
           </div>
         </form>
       </section>
@@ -442,34 +454,41 @@ function App(): React.ReactNode {
         <div className="pb-2 text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
           LIVE BROWSER
         </div>
-        <img
-          ref={viewer}
-          className={`w-full rounded-xl border border-line bg-zinc-800 object-contain ${expanded ? "min-h-0 flex-1" : "aspect-video"}`}
-          src={screenUrl}
-          alt={`${agent.name} browser`}
-          onPointerUp={(event) => {
-            const position = point(event);
-            if (position)
+        {agent.desktop ? (
+          <img
+            ref={viewer}
+            className={`w-full rounded-xl border border-line bg-zinc-800 object-contain ${expanded ? "min-h-0 flex-1" : "aspect-video"}`}
+            src={screenUrl}
+            alt={`${agent.name} browser`}
+            onPointerUp={(event) => {
+              const position = point(event);
+              if (position)
+                void browserInput({
+                  type: "click",
+                  ...position,
+                  button: "left",
+                  clickCount: 1,
+                });
+            }}
+            onWheel={(event) => {
+              const position = point(event);
+              if (!position) return;
+              event.preventDefault();
               void browserInput({
-                type: "click",
-                ...position,
-                button: "left",
-                clickCount: 1,
+                type: "scroll",
+                deltaX: event.deltaX,
+                deltaY: event.deltaY,
               });
-          }}
-          onWheel={(event) => {
-            const position = point(event);
-            if (!position) return;
-            event.preventDefault();
-            void browserInput({
-              type: "scroll",
-              deltaX: event.deltaX,
-              deltaY: event.deltaY,
-            });
-          }}
-        />
+            }}
+          />
+        ) : (
+          <div className="grid aspect-video place-items-center rounded-xl border border-line bg-zinc-900 px-6 text-center text-xs text-muted-foreground">
+            No browser slot assigned. This bot can still use Pi, files, shell,
+            messaging, and skills.
+          </div>
+        )}
         <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
-          <span>{agent.name} browser</span>
+          <span>{agent.desktop ? `${agent.name} browser` : "No browser"}</span>
           <span className="flex gap-3">
             {agent.desktop?.viewerUrl && (
               <a
@@ -481,17 +500,19 @@ function App(): React.ReactNode {
                 Open login
               </a>
             )}
-            <button
-              className="text-zinc-100"
-              onClick={() => setExpanded((value) => !value)}
-            >
-              {expanded ? "Exit" : "Expand"}
-            </button>
+            {agent.desktop && (
+              <button
+                className="text-zinc-100"
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? "Exit" : "Expand"}
+              </button>
+            )}
           </span>
         </div>
       </aside>
       <dialog
-        className="w-[420px] rounded-2xl border border-line bg-[#171719] p-5 text-zinc-100 backdrop:bg-black/60"
+        className="max-h-[80vh] w-[min(680px,calc(100vw-2rem))] overflow-auto rounded-2xl border border-line bg-[#171719] p-5 text-zinc-100 backdrop:bg-black/60"
         ref={settings}
       >
         <div className="mb-5 flex items-center justify-between">
@@ -503,17 +524,115 @@ function App(): React.ReactNode {
             Close
           </button>
         </div>
+        {settingsError && (
+          <p className="mb-4 rounded-lg bg-red-950 p-3 text-sm text-red-200">
+            {settingsError}
+          </p>
+        )}
         <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
-          ENABLED PI SKILLS
+          BOTS ({agents.length})
         </div>
-        <div className="mt-2 grid max-h-60 gap-2 overflow-auto">
+        <div className="mt-2 grid gap-2">
+          {agents.map((item) => (
+            <div
+              className="flex items-center justify-between rounded-xl bg-zinc-800 p-3"
+              key={item.id}
+            >
+              <span>
+                <b className="block text-sm">{item.name}</b>
+                <small className="text-muted-foreground">{item.id}</small>
+              </span>
+              <button
+                className="text-xs text-red-300 disabled:opacity-40"
+                disabled={item.status === "running" || agents.length === 1}
+                onClick={() => void deleteAgent(item)}
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+        <details className="mt-2 rounded-xl border border-line p-3">
+          <summary className="cursor-pointer text-sm font-semibold">
+            Add bot
+          </summary>
+          <form className="mt-3 grid gap-2" onSubmit={createAgent}>
+            <input
+              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
+              name="id"
+              placeholder="bot-id"
+              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+              required
+            />
+            <input
+              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
+              name="name"
+              placeholder="Bot name"
+              required
+            />
+            <input
+              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
+              name="role"
+              placeholder="Role"
+              required
+            />
+            <textarea
+              className="min-h-24 rounded-lg border border-line bg-raised px-3 py-2 text-sm"
+              name="instructions"
+              placeholder="Instructions"
+              required
+            />
+            <button className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-zinc-900">
+              Create bot
+            </button>
+          </form>
+        </details>
+        <div className="my-5 border-t border-line" />
+        <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
+          ENABLED PI SKILLS ({skills.length})
+        </div>
+        <details className="mt-2 rounded-xl border border-line p-3">
+          <summary className="cursor-pointer text-sm font-semibold">
+            Add skill
+          </summary>
+          <form className="mt-3 grid gap-2" onSubmit={createSkill}>
+            <input
+              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
+              name="name"
+              placeholder="skill-name"
+              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+              required
+            />
+            <input
+              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
+              name="description"
+              placeholder="When should Pi use this skill?"
+              required
+            />
+            <textarea
+              className="min-h-32 rounded-lg border border-line bg-raised px-3 py-2 font-mono text-sm"
+              name="content"
+              placeholder="Skill instructions"
+              required
+            />
+            <button className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-zinc-900">
+              Create skill
+            </button>
+          </form>
+        </details>
+        <div className="mt-2 grid max-h-[55vh] gap-2 overflow-auto">
           {skills.map((skill) => (
-            <div className="rounded-xl bg-zinc-800 p-3" key={skill.name}>
-              <b className="text-xs">${skill.name}</b>
+            <details className="rounded-xl bg-zinc-800 p-3" key={skill.name}>
+              <summary className="cursor-pointer text-xs font-semibold">
+                ${skill.name}
+              </summary>
               <p className="mt-1 text-xs text-muted-foreground">
                 {skill.description}
               </p>
-            </div>
+              <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-xs leading-5 text-zinc-300">
+                {skill.content}
+              </pre>
+            </details>
           ))}
         </div>
         <div className="mt-5 flex items-center justify-between border-t border-line pt-4">

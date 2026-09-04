@@ -1,32 +1,28 @@
-import { randomUUID } from "node:crypto";
 import { join, relative } from "node:path";
 
 import { os } from "@orpc/server";
 import type { RouterClient } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
-import { loadConfig } from "@slopbot/config";
 import { Hono } from "hono";
 import { z } from "zod";
 
 import {
   AgentController,
   BrowserInputSchema,
+  CreateAgentInputSchema,
+  CreateSkillInputSchema,
   PiRuntime,
   SandboxComputerOptionsSchema,
-  createAgentId,
 } from "slopbot";
 import { errorMessage, textSchema } from "slopbot/protocol";
 
-const CreateAgentSchema = z.object({
-  name: textSchema(50),
-  role: textSchema(200),
-});
+import { loadConfig } from "./config.ts";
+
 const AgentIdSchema = z.object({ agentId: textSchema(100) });
 const SendMessageSchema = AgentIdSchema.extend({
   text: textSchema(8_000),
   skill: textSchema(100).nullish(),
 });
-const PassReplySchema = AgentIdSchema.extend({ to: textSchema(100) });
 const AgentBrowserInputSchema = AgentIdSchema.extend({
   input: BrowserInputSchema,
 });
@@ -56,25 +52,18 @@ export const appRouter = {
   },
   agents: {
     list: os.handler(() => agents.listAgents()),
-    create: os.input(CreateAgentSchema).handler(({ input }) =>
-      agents.createAgent({
-        id: createAgentId(randomUUID()),
-        name: input.name,
-        aliases: [input.name],
-        role: input.role,
-        sandbox: "read-only",
-        instructions:
-          "Own this specialty and return concise, evidence-backed results to the requesting teammate.",
-      }),
-    ),
+    create: os
+      .input(CreateAgentInputSchema)
+      .handler(({ input }) => agents.createAgent(input)),
+    remove: os.input(AgentIdSchema).handler(async ({ input }) => {
+      await agents.deleteAgent(input.agentId);
+      return { ok: true };
+    }),
     send: os
       .input(SendMessageSchema)
       .handler(({ input }) =>
         agents.sendMessage(input.agentId, input.text, input.skill ?? undefined),
       ),
-    pass: os
-      .input(PassReplySchema)
-      .handler(({ input }) => agents.passReply(input.agentId, input.to)),
     clear: os
       .input(AgentIdSchema)
       .handler(({ input }) => agents.clearChat(input.agentId)),
@@ -85,7 +74,12 @@ export const appRouter = {
         return { ok: true };
       }),
   },
-  skills: { list: os.handler(() => agents.listSkills()) },
+  skills: {
+    list: os.handler(() => agents.listSkills()),
+    create: os
+      .input(CreateSkillInputSchema)
+      .handler(({ input }) => agents.createSkill(input)),
+  },
 };
 export type AppClient = RouterClient<typeof appRouter>;
 
