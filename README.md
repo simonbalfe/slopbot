@@ -1,100 +1,86 @@
 # SlopBot
 
-SlopBot is a minimal two-agent web app. LEAD coordinates work, WORKER executes it, and every handoff is a durable message rather than shared chat context.
+An open-source take on Grok Bot: a local app where AI agents chat with you, delegate work to each other, browse the web, and work on files.
 
-## Architecture
+SlopBot is an independent project inspired by the Grok Bot agent blueprint. The current implementation uses OpenAI Codex through Pi; Grok model support is not implemented.
 
-```mermaid
-flowchart LR
-  subgraph App["One SlopBot container"]
-    UI["Vite + React"] --> API["Hono + oRPC"]
-    API --> Core["Agent controller"]
-    Core <--> Store[("SQLite queue and transcripts")]
-    Core --> Pi["One shared Pi runtime"]
-    Pi --> Lead["LEAD session"]
-    Pi --> Worker["WORKER session"]
-    Pi --> More["Additional bot sessions"]
-  end
-  Pi --> Codex["OpenAI Codex subscription"]
-  Core --> Slot1["Browser container<br/>slot 1"]
-  Core --> Slot2["Browser container<br/>slot 2"]
-  Core --> Workspace[("Shared workspace mount")]
-  Slot1 & Slot2 --> Workspace
+## What it does
+
+- Create and delete bots in Settings, each with its own role and private chat history.
+- Give a bot a task and let it hand work to another bot through persistent messages.
+- Watch an assigned browser live, interact with it, and sign in to websites.
+- Let agents read and edit files or run commands in a shared workspace.
+- Create reusable skills in Settings and attach a skill to a message.
+- Keep agent profiles, chat history, and message delivery state across restarts.
+
+For example, ask one bot to research a task and hand the implementation to another. The bots exchange explicit messages; their private conversations stay separate.
+
+## Run locally
+
+You need Docker with Compose and a ChatGPT account with Codex access.
+
+The checked-in Compose file includes a local Leads CLI integration. For a standalone setup, remove these two entries from the `slopbot.volumes` list in [compose.yaml](compose.yaml):
+
+```yaml
+- ./data/bin/leads:/usr/local/bin/leads:ro
+- ${CODEX_HOME}/skills/gmaps-leads-cli:/data/pi/skills/gmaps-leads-cli:ro
 ```
 
-Pi agents are sessions inside the shared SlopBot process, not containers. The two browser containers are optional assignable work surfaces with separate login profiles.
-
-See [docs/roadmap.md](docs/roadmap.md) for the blueprint gap analysis and build order.
-
-```sh
-bun install
-bun run install:leads
-bun run dev
-```
-
-The development command starts the Docker runtime, then Vite serves the UI at `http://127.0.0.1:5175` and proxies typed oRPC calls to Hono at `http://127.0.0.1:4317`.
-
-```sh
-bun start
-```
-
-`bun start` builds the production web app and serves it from Bun.
-
-## Current status
-
-- Web UI built with React, Vite, Tailwind, and TanStack Router.
-- End-to-end typed oRPC API hosted by Hono.
-- Stable `lead` and `worker` defaults, with additional bots managed in Settings.
-- Separate durable transcripts and a SQLite message queue.
-- Asynchronous correlated `send_to_agent` handoffs with bounded retries and visible delivery state.
-- One shared SlopBot container for every Pi session, plus two assignable browser-runtime containers controlled through a small TypeScript API.
-- A live browser preview with direct pointer and scroll input.
-- Skills are listed in Settings and attached to a run only when selected.
-- The `gmaps-leads-cli` skill is mounted from `$CODEX_HOME`, and WORKER can run its Linux `leads` binary through Pi's shell tool.
-
-The model runtime is Pi's in-process SDK using the `openai-codex` provider and a ChatGPT Plus or Pro subscription. SlopBot owns the agent registry, SQLite queue, UI, browser API, and browser image. [Agent Infra Sandbox](https://github.com/agent-infra/sandbox) remains a parity reference only.
-
-The core package exports the Pi runtime and SlopBot orchestration layers separately:
-
-```ts
-import { AgentController, PiRuntime } from "slopbot";
-
-const cwd = process.cwd();
-const runtime = new PiRuntime({ cwd });
-const agents = new AgentController(runtime, {
-  cwd,
-  databasePath: ".slopbot/slopbot.sqlite",
-});
-
-await agents.initialize();
-agents.sendMessage("lead", "Research this, build it, then review it.");
-```
-
-Agent profiles, runtime session IDs, message envelopes, delivery states, and visible transcripts persist in SQLite.
-
-Open `http://127.0.0.1:4317` for the local UI.
-
-## Local browser sandboxes
-
-`compose.yaml` runs the shared SlopBot app and two browser-runtime slots. Slots are assigned to agents when available. Both mount the selected workspace, while separate Docker volumes preserve each browser login across container rebuilds. The runtime is implemented in TypeScript under [`packages/browser-runtime`](packages/browser-runtime/README.md).
+Then run from the repository root:
 
 ```sh
 docker compose up -d --build
 ```
 
-SlopBot prompts for ChatGPT Plus/Pro authentication before showing the agents. The OAuth tokens are stored under the existing `data` volume and refreshed by Pi.
+Open <http://127.0.0.1:4317> and follow the Codex sign-in prompt. Start with the default **lead** and **worker** bots, or create your own in Settings. Use **Open login** to sign in to a bot's assigned browser.
 
-Open `http://127.0.0.1:4317`. Use each agent's **Open login** link, or open `http://127.0.0.1:6080/vnc/vnc.html` for LEAD and port `6081` for WORKER.
+Files are shared through `./workspace` by default. To use another folder, set `SLOPBOT_WORKSPACE_PATH` before starting Compose:
 
-For a cloud host, keep the browser and raw CDP ports private, set `SLOPBOT_SANDBOX_PUBLIC_URLS` to authenticated browser URLs, and provide `SLOPBOT_SANDBOX_API_KEY` through the platform's secret store. Never expose raw CDP directly to the internet.
+```sh
+export SLOPBOT_WORKSPACE_PATH=/absolute/path/to/your/project
+docker compose up -d --build
+```
 
-Set `SLOPBOT_WORKSPACE_PATH` to the Mac folder the agents should use. Docker mounts only that folder at `/workspace`.
+App data and authentication are stored in `./data`. Browser logins are stored in Docker volumes. See [.env.example](.env.example) for configuration names.
 
-`bun run install:leads` builds the current CLI source from `$REPOS_ROOT/projects/clients/david/gmaps-leads-cli` into the ignored local data directory. Set `LEADS_API_URL` in your shell before starting SlopBot; provider credentials stay on the Leads API server.
+### Optional Leads CLI
 
-## Repository layout
+To keep the Leads integration, set `CODEX_HOME` to your Codex directory containing `skills/gmaps-leads-cli`, and `REPOS_ROOT` to the repository root containing `projects/clients/david/gmaps-leads-cli`. With Bun installed, run `bun run install:leads` before starting Compose. Set `LEADS_API_URL` to your Leads API server; provider credentials stay on that server.
 
-- `apps/server`: Hono, oRPC, and the production static UI host.
-- `apps/web`: React, Vite, Tailwind, and TanStack Router.
-- `apps/server/src/config.ts`: Zod-validated server environment configuration.
-- `packages/core`: Pi runtime adapter, orchestration, persistence, and computer tools.
+## How it works
+
+The React web app talks to a Hono server through a typed oRPC API. Pi runs each bot as a separate session in one app process. SQLite stores profiles, visible transcripts, and queued messages; Pi persists its own sessions.
+
+Compose starts the app and two browser containers. Browser slots are assigned when available, independently of the number of bots. Each slot has its own persistent login profile. All bots share the workspace and app container.
+
+This is an early local prototype. Tool actions currently run without an approval prompt. Keep the app, browser views, and raw browser-control ports private. Scoped memory, approval controls, cancellation, group rooms, and additional model providers are planned in the [roadmap](docs/roadmap.md).
+
+## Development
+
+Install Bun, complete the Compose setup above, then run:
+
+```sh
+bun install
+bun run dev
+```
+
+The UI runs at <http://127.0.0.1:5175> and proxies requests to the Docker app at port `4317`.
+
+```sh
+bun run check
+bun test
+bun run build
+```
+
+`bun start` builds and runs the app directly on the host. It does not start browser containers; agents use the host filesystem and available shell tools.
+
+| Directory | Purpose |
+|---|---|
+| [apps/web](apps/web) | Chat, settings, and browser preview |
+| [apps/server](apps/server) | API, configuration, and web app serving |
+| [packages/core](packages/core) | Agent sessions, messaging, persistence, and tools |
+| [packages/browser-runtime](packages/browser-runtime/README.md) | Chromium service and browser API |
+
+## License
+
+An open-source license still needs to be selected and added to this repository.
