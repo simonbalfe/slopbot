@@ -1,13 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { setTimeout } from "node:timers/promises";
 
 import { Hono } from "hono";
-import { chromium } from "playwright-core";
+import { startDesktop } from "./desktop.ts";
+import { startCdpProxy, vncWebSocket } from "./transports.ts";
+import type { VncPeer } from "./transports.ts";
 import type { Page } from "playwright-core";
 import { z } from "zod";
-import { ComputerArgumentsSchema } from "./desktop-protocol.ts";
+import { ComputerArgumentsSchema } from "@slopbot/contracts/computer";
 import { toolRelay } from "./tool-relay.ts";
 
 const EnvSchema = z.object({
@@ -45,81 +46,14 @@ const KeySchema = z.object({ key: z.string().min(1).max(100) });
 const env = EnvSchema.parse(process.env);
 process.env["DISPLAY"] = env.DISPLAY;
 
-for (const lockFile of ["SingletonCookie", "SingletonLock", "SingletonSocket"])
-  rmSync(join(env.BROWSER_PROFILE_DIR, lockFile), { force: true });
-mkdirSync(join(env.BROWSER_WORKSPACE, "Downloads"), { recursive: true });
-
-const processes = [
-  Bun.spawn(["Xvfb", env.DISPLAY, "-screen", "0", "1280x1024x24", "-ac", "-nolisten", "tcp"]),
-];
-await setTimeout(500);
-processes.push(
-  Bun.spawn(["openbox"]),
-  Bun.spawn(["x11vnc", "-display", env.DISPLAY, "-rfbport", "5900", "-localhost", "-forever", "-shared", "-nopw"]),
-);
-
-const context = await chromium.launchPersistentContext(env.BROWSER_PROFILE_DIR, {
-  executablePath: "/usr/bin/chromium",
-  headless: false,
-  handleSIGINT: false,
-  handleSIGTERM: false,
-  handleSIGHUP: false,
-  chromiumSandbox: process.getuid?.() !== 0,
-  args: [
-    "--disable-dev-shm-usage",
-    "--disable-blink-features=AutomationControlled",
-    "--window-size=1280,1024",
-    `--remote-debugging-port=${env.BROWSER_CDP_PORT}`,
-  ],
-  acceptDownloads: true,
-  downloadsPath: join(env.BROWSER_WORKSPACE, "Downloads"),
-  viewport: null,
-});
-processes.push(Bun.spawn(["xterm", "-geometry", "88x24+20+40", "-title", "SlopBot VM"], { cwd: env.BROWSER_WORKSPACE }));
+const desktop = await startDesktop(env);
+const { context } = desktop;
 
 async function page(): Promise<Page> {
   return context.pages().find((candidate) => !candidate.isClosed()) ?? context.newPage();
 }
 
-const cdpPeers = new WeakMap<Bun.Socket, Bun.Socket>();
-function closePeer(socket: Bun.Socket): void {
-  const peer = cdpPeers.get(socket);
-  cdpPeers.delete(socket);
-  if (peer) {
-    cdpPeers.delete(peer);
-    peer.end();
-  }
-}
-const cdpProxy = Bun.listen({
-  hostname: env.LISTEN_HOST,
-  port: env.BROWSER_CDP_PROXY_PORT,
-  socket: {
-    open(client) {
-      client.pause();
-      void Bun.connect({
-        hostname: "127.0.0.1",
-        port: env.BROWSER_CDP_PORT,
-        socket: {
-          open(upstream) {
-            cdpPeers.set(client, upstream);
-            cdpPeers.set(upstream, client);
-            client.resume();
-          },
-          data(upstream, data) {
-            cdpPeers.get(upstream)?.write(data);
-          },
-          close: closePeer,
-          error: closePeer,
-        },
-      }).catch(() => client.end());
-    },
-    data(client, data) {
-      cdpPeers.get(client)?.write(data);
-    },
-    close: closePeer,
-    error: closePeer,
-  },
-});
+const cdpProxy = startCdpProxy(env.LISTEN_HOST, env.BROWSER_CDP_PROXY_PORT, env.BROWSER_CDP_PORT);
 
 function ok(data: unknown): { success: true; data: unknown } {
   return { success: true, data };
@@ -243,8 +177,7 @@ app.onError((error, requestContext) =>
   requestContext.json({ success: false, message: error instanceof Error ? error.message : String(error) }, error instanceof z.ZodError ? 400 : 500),
 );
 
-type WebSocketData = { socket?: Bun.Socket<WebSocketData> };
-const server = Bun.serve<WebSocketData>({
+const server = Bun.serve<VncPeer>({
   port: env.PORT,
   hostname: env.LISTEN_HOST,
   fetch(request, bunServer) {
@@ -253,34 +186,7 @@ const server = Bun.serve<WebSocketData>({
       return undefined;
     return app.fetch(request);
   },
-  websocket: {
-    open(webSocket) {
-      void Bun.connect<WebSocketData>({
-        hostname: "127.0.0.1",
-        port: 5900,
-        socket: {
-          open(socket) {
-            webSocket.data.socket = socket;
-          },
-          data(_socket, data) {
-            webSocket.send(data);
-          },
-          close() {
-            webSocket.close();
-          },
-          error(_socket, error) {
-            webSocket.close(1011, error.message);
-          },
-        },
-      });
-    },
-    message(webSocket, message) {
-      webSocket.data.socket?.write(typeof message === "string" ? new TextEncoder().encode(message) : message);
-    },
-    close(webSocket) {
-      webSocket.data.socket?.end();
-    },
-  },
+  websocket: vncWebSocket,
 });
 
 let closing = false;
@@ -289,8 +195,7 @@ async function shutdown(): Promise<void> {
   closing = true;
   server.stop();
   cdpProxy.stop(true);
-  await context.close();
-  for (const childProcess of processes) childProcess.kill();
+  await desktop.close();
 }
 
 process.once("SIGINT", () => void shutdown());

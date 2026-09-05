@@ -2,7 +2,7 @@ import { createCodingTools, createReadOnlyTools } from "@earendil-works/pi-codin
 import { Hono } from "hono";
 import { Value } from "typebox/value";
 
-import { RelayCallSchema, RelayCatalogSchema, RelayResultSchema } from "./desktop-protocol.ts";
+import { RelayCallSchema, RelayCatalogSchema, RelayResultSchema } from "@slopbot/contracts/computer";
 
 export function toolRelay(cwd: string): Hono {
   const tools = new Map([...createCodingTools(cwd), ...createReadOnlyTools(cwd)].map((tool) => [tool.name, tool]));

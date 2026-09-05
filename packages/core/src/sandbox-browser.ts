@@ -1,11 +1,10 @@
 import { z } from "zod";
 
-import { textSchema } from "./protocol.ts";
-import { ComputerArgumentsSchema } from "../../browser-runtime/src/desktop-protocol.ts";
-import type { ComputerArguments } from "../../browser-runtime/src/desktop-protocol.ts";
+import { BrowserArgumentsSchema, ComputerArgumentsSchema } from "@slopbot/contracts/computer";
+import type { ComputerArguments } from "@slopbot/contracts/computer";
 import type { ImageAttachment } from "./agent-types.ts";
 
-export { ComputerArgumentsSchema };
+export { BrowserArgumentsSchema, ComputerArgumentsSchema };
 
 const PointSchema = z.number().finite().min(0).max(16_384);
 const ResponseSchema = z.object({
@@ -13,18 +12,6 @@ const ResponseSchema = z.object({
   message: z.string().optional(),
   data: z.unknown().optional(),
 });
-
-export const BrowserArgumentsSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("navigate"), url: z.url() }),
-  z.object({ action: z.literal("snapshot") }),
-  z.object({ action: z.literal("click"), selector: textSchema(1_000) }),
-  z.object({
-    action: z.literal("type"),
-    selector: textSchema(1_000),
-    text: textSchema(8_000),
-  }),
-  z.object({ action: z.literal("evaluate"), expression: textSchema(8_000) }),
-]);
 
 export const BrowserInputSchema = z.discriminatedUnion("type", [
   z.object({
@@ -57,11 +44,6 @@ export class SandboxBrowser {
   constructor(baseUrl: string, apiKey?: string) {
     this.endpoint = z.url().parse(baseUrl).replace(/\/$/, "");
     this.apiKey = apiKey;
-  }
-
-  async connect(): Promise<void> {
-    if (!await this.request("/v1/browser/info"))
-      throw new Error("Sandbox browser is unavailable");
   }
 
   async execute(input: BrowserArguments): Promise<string> {

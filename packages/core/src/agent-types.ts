@@ -1,3 +1,5 @@
+import { ModelSelectionSchema } from "@slopbot/contracts/providers";
+export { ModelSelectionSchema } from "@slopbot/contracts/providers";
 import { z } from "zod";
 
 import { textSchema } from "./protocol.ts";
@@ -38,7 +40,6 @@ export const DesktopAssignmentSchema = z.object({
   screen: z.number().int().nonnegative(),
   viewerUrl: z.url().nullable(),
 });
-export const ModelSelectionSchema = z.object({ provider: z.enum(["openai-codex", "nous"]).default("openai-codex"), model: textSchema(200).default("gpt-5.6-sol") });
 
 export const AgentProfileSchema = z.object({
   id: AgentIdSchema,

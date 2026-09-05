@@ -32,7 +32,6 @@ const StoredAgentRowSchema = z.object({
   provider: z.string(),
   model: z.string(),
   threadId: ThreadIdSchema.nullable(),
-  threadConfig: z.string().nullable(),
 });
 const ColumnSchema = z.object({ name: z.string() });
 const MessageEnvelopeRowSchema = MessageEnvelopeSchema.omit({
@@ -45,7 +44,6 @@ const AgentMessageRowSchema = AgentMessageSchema.omit({ images: true }).extend({
 export type StoredAgent = Readonly<{
   profile: AgentProfile;
   threadId: ThreadId | null;
-  threadConfig: string | null;
 }>;
 
 type QueueMessageInput = Readonly<{
@@ -166,13 +164,6 @@ export class AgentStore {
       .run(parsed.name, parsed.role, parsed.instructions, parsed.provider, parsed.model, parsed.sandbox, JSON.stringify(parsed.aliases), new Date().toISOString(), parsed.id);
   }
 
-  upsertProfiles(profiles: readonly AgentProfile[]): void {
-    for (const profile of profiles) {
-      if (!this.isRetired(profile.id) && !this.getAgent(profile.id))
-        this.insertProfile(profile);
-    }
-  }
-
   createProfile(profile: AgentProfile): StoredAgent {
     const validated = AgentProfileSchema.parse(profile);
     if (this.getAgent(validated.id)) throw new Error("Agent ID already exists");
@@ -194,38 +185,15 @@ export class AgentStore {
     );
   }
 
-  deleteAgent(agentId: AgentId, retire = true): void {
-    const remove = this.database.transaction(() => {
-      if (retire)
-        this.database.query(`
-          INSERT INTO retired_agents (id, retired_at) VALUES (?, ?)
-          ON CONFLICT(id) DO UPDATE SET retired_at = excluded.retired_at
-        `).run(agentId, new Date().toISOString());
-      this.database.query(`
-        DELETE FROM transcript_events
-        WHERE agent_id = ? OR message_id IN (
-          SELECT id FROM message_envelopes
-          WHERE sender_id = ? OR recipient_id = ?
-        )
-      `).run(agentId, agentId, agentId);
-      this.database.query(
-        "DELETE FROM message_envelopes WHERE sender_id = ? OR recipient_id = ?",
-      ).run(agentId, agentId);
-      this.database.query("DELETE FROM desktop_assignments WHERE agent_id = ?").run(agentId);
-      this.database.query("DELETE FROM agents WHERE id = ?").run(agentId);
-    });
-    remove();
-  }
-
-  setThread(agentId: AgentId, threadId: ThreadId, threadConfig: string): void {
-    this.database.query("UPDATE agents SET thread_id = ?, thread_config = ?, updated_at = ? WHERE id = ?")
-      .run(threadId, threadConfig, new Date().toISOString(), agentId);
+  setThread(agentId: AgentId, threadId: ThreadId): void {
+    this.database.query("UPDATE agents SET thread_id = ?, updated_at = ? WHERE id = ?")
+      .run(threadId, new Date().toISOString(), agentId);
   }
 
   getAgent(agentId: AgentId): StoredAgent | undefined {
     const row = this.database.query(`
       SELECT id, name, aliases_json AS aliasesJson, role, sandbox, instructions, provider, model,
-        thread_id AS threadId, thread_config AS threadConfig
+        thread_id AS threadId
       FROM agents WHERE id = ?
     `).get(agentId);
     return row ? this.parseAgent(row) : undefined;
@@ -234,7 +202,7 @@ export class AgentStore {
   listAgents(): readonly StoredAgent[] {
     return this.database.query(`
       SELECT id, name, aliases_json AS aliasesJson, role, sandbox, instructions, provider, model,
-        thread_id AS threadId, thread_config AS threadConfig
+        thread_id AS threadId
       FROM agents ORDER BY created_at, id
     `).all().map((row) => this.parseAgent(row));
   }
@@ -251,11 +219,6 @@ export class AgentStore {
     this.database.query("INSERT INTO desktop_assignments (agent_id, screen, created_at) VALUES (?, ?, ?)")
       .run(agentId, screen, new Date().toISOString());
     return screen;
-  }
-
-  releaseDesktops(agentIds: readonly AgentId[]): void {
-    const remove = this.database.query("DELETE FROM desktop_assignments WHERE agent_id = ?");
-    for (const agentId of agentIds) remove.run(agentId);
   }
 
   queueMessage(input: QueueMessageInput): MessageEnvelope {
@@ -318,14 +281,6 @@ export class AgentStore {
     if (result.changes > 0) return true;
     this.markFailed(messageId);
     return false;
-  }
-
-  hasReply(messageId: string): boolean {
-    return Boolean(
-      this.database
-        .query("SELECT 1 FROM message_envelopes WHERE parent_id = ? LIMIT 1")
-        .get(messageId),
-    );
   }
 
   claimNextMessage(agentId: AgentId): MessageEnvelope | undefined {
@@ -453,12 +408,6 @@ export class AgentStore {
     );
   }
 
-  private isRetired(agentId: AgentId): boolean {
-    return Boolean(
-      this.database.query("SELECT 1 FROM retired_agents WHERE id = ?").get(agentId),
-    );
-  }
-
   private desktopScreen(screen: number, screenCount: number): number {
     if (screen >= screenCount) throw new Error(`X11 screen ${screen} exceeds configured capacity ${screenCount}`);
     return screen;
@@ -469,7 +418,6 @@ export class AgentStore {
     return {
       profile: AgentProfileSchema.parse({ ...row, aliases: z.array(z.string()).parse(JSON.parse(row.aliasesJson)) }),
       threadId: row.threadId,
-      threadConfig: row.threadConfig,
     };
   }
 

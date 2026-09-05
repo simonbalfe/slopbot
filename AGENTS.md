@@ -10,6 +10,7 @@ Read [`README.md`](README.md) first for the current architecture and local run c
 | [`docs/roadmap.md`](docs/roadmap.md) | Status, acceptance criteria, invariants, and build order | Changing agents, messaging, memory, permissions, rooms, or scheduling |
 | [`apps/web`](apps/web) | React UI, TanStack Router, chat, settings, and browser preview | Changing user-facing behavior |
 | [`apps/server`](apps/server) | Hono host, oRPC boundary, environment parsing, and static UI serving | Changing APIs, configuration, or startup |
+| [`packages/contracts`](packages/contracts) | Shared provider policy and computer request schemas | Changing provider choices or runtime/computer boundaries |
 | [`packages/core`](packages/core) | Pi sessions, agent registry, SQLite mailroom, skills, and computer tools | Changing runtime or orchestration behavior |
 | [`packages/browser-runtime/README.md`](packages/browser-runtime/README.md) | Browser service contract and Agent Infra parity scope | Changing Chromium, CDP, VNC, or browser endpoints |
 | [`vm`](vm) | Lima computer VM, executor/desktop service, shared workspace | Changing local infrastructure or isolation |

@@ -13,6 +13,7 @@
     "hono": "^4.13.5",
     "slopbot": "workspace:*",
     "zod": "4.5.4",
-    "@orpc/client": "^1.15.0"
+    "@orpc/client": "^1.15.0",
+    "@slopbot/contracts": "workspace:*"
   }
 }

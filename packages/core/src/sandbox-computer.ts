@@ -1,5 +1,3 @@
-import { setTimeout } from "node:timers/promises";
-
 import { z } from "zod";
 
 import { DesktopAssignmentSchema } from "./agent-types.ts";
@@ -29,18 +27,6 @@ export class SandboxComputer {
     this.browsers = this.options.baseUrls.map(
       (url) => new SandboxBrowser(url, this.options.apiKey),
     );
-  }
-
-  async start(): Promise<void> {
-    for (let attempt = 0; attempt < 60; attempt++) {
-      try {
-        await Promise.all(this.browsers.map((browser) => browser.connect()));
-        return;
-      } catch (error) {
-        if (attempt === 59) throw error;
-        await setTimeout(500);
-      }
-    }
   }
 
   get screenCount(): number {

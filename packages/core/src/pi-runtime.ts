@@ -1,3 +1,4 @@
+import { defaultProvider, defaultModel } from "@slopbot/contracts/providers";
 import { nousProvider, nousModels } from "./nous-provider.ts";
 import { ModelSelectionSchema } from "./agent-types.ts";
 import { randomUUID } from "node:crypto";
@@ -138,7 +139,7 @@ export class PiRuntime {
     this.sessions.clear();
   }
 
-  async getAuthState(provider = "openai-codex"): Promise<PiAuthState> {
+  async getAuthState(provider = defaultProvider): Promise<PiAuthState> {
     if (this.authLogin) return this.authState;
     if (this.authState.status === "error") return this.authState;
     const authenticated = Boolean(await this.modelRuntime?.getAuth(provider));
@@ -146,7 +147,7 @@ export class PiRuntime {
     return this.authState;
   }
 
-  async startLogin(provider = "openai-codex"): Promise<PiAuthState> {
+  async startLogin(provider = defaultProvider): Promise<PiAuthState> {
     if ((await this.getAuthState(provider)).status === "authenticated" || this.authLogin) return this.authState;
     const modelRuntime = this.modelRuntime;
     if (!modelRuntime) throw new Error("Pi runtime is not connected");
@@ -184,7 +185,7 @@ export class PiRuntime {
     return this.authState;
   }
 
-  async listModels(provider = "openai-codex"): Promise<readonly { id: string; name: string }[]> {
+  async listModels(provider = defaultProvider): Promise<readonly { id: string; name: string }[]> {
     const runtime = this.modelRuntime;
     if (!runtime) throw new Error("Runtime is not connected");
     if (provider === "nous") {
@@ -312,8 +313,8 @@ export class PiRuntime {
   private async createSession(sessionManager: SessionManager, options: ThreadOptions): Promise<ThreadId> {
     const modelRuntime = this.modelRuntime;
     if (!modelRuntime) throw new Error("Pi runtime is not connected");
-    const model = modelRuntime.getModel("openai-codex", "gpt-5.6-sol");
-    if (!model) throw new Error("Pi has no OpenAI Codex gpt-5.6-sol model");
+    const model = modelRuntime.getModel(defaultProvider, defaultModel);
+    if (!model) throw new Error(`Default model is unavailable: ${defaultProvider}/${defaultModel}`);
     const threadId = ThreadIdSchema.parse(sessionManager.getSessionId());
     const resourceLoader = await this.createResourceLoader(options.cwd, options.developerInstructions);
     const customTools = [
@@ -369,3 +370,8 @@ export class PiRuntime {
     this.onText?.(threadId, event.assistantMessageEvent.delta);
   }
 }
+
+export type AgentRuntime = Pick<PiRuntime,
+  "connect" | "close" | "listSkills" | "createSkill" | "startThread" | "resumeThread" |
+  "threadContainsText" | "startTurn" | "onToolCall" | "onText" | "onTurnComplete"
+>;
