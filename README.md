@@ -11,15 +11,20 @@ Terminal / web UI → SlopBot runtime → computer API → Linux VM
 
 ## Run locally
 
-On this machine, run `slopbot` from any directory. The installed launcher at `~/.local/bin/slopbot` uses this checkout and starts the native runtime and terminal chat.
-
-On macOS, install Bun and Lima, then run from this repository:
+Install on macOS from a checkout:
 
 ```sh
-brew install lima
-bun install
-bun run chat
+sh install.sh
+slopbot
 ```
+
+Or download the installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/simonbalfe/slopbot/main/install.sh | sh
+```
+
+The installer installs Bun if needed, builds the dashboard, and creates `~/.local/bin/slopbot`. Git is required. Remote installation defaults to `~/.local/share/slopbot`; override with `SLOPBOT_INSTALL_DIR`. Override the command directory with `SLOPBOT_BIN_DIR`. Existing destination directories are never overwritten. Lima is optional: install it with `brew install lima` for computer access.
 
 This starts SlopBot natively and opens terminal chat. Run `bun run vm:up` when you want the separate computer available. On first use, follow the printed Codex login URL and enter its device code. The current model is OpenAI Codex; Grok model support is planned.
 
@@ -62,7 +67,7 @@ The VM has 2 CPUs, 3 GiB RAM, and a 20 GiB sparse disk under `~/.lima/slopbot`. 
 
 SlopBot owns one state directory, `data/runtime`, configured through `SLOPBOT_DATA_DIR`. The engine-specific subdirectory is derived internally. The VM receives application source through a filtered deployment archive, not a repository mount. It does not need access to the runtime's credentials or database. Stopping or updating either component preserves its data.
 
-Bot state was migrated out of the former VM-hosted runtime. The earlier Docker data and browser volumes remain as backups and are not used by this setup. Pi's detailed session format is still Pi-specific; full harness-independent bot-state storage is planned separately.
+Pi's detailed session format is still Pi-specific; full harness-independent bot-state storage is planned separately.
 
 ## Development
 
@@ -77,7 +82,7 @@ The standalone verification uses temporary data and a simulated model response. 
 
 `bun run start:server` runs SlopBot in the foreground on any supported Bun host. Set `SLOPBOT_DATA_DIR` to a writable local directory, `SLOPBOT_WORKSPACE` to a local host working directory, and `SLOPBOT_COMPUTER_URL` to its API.
 
-Docker remains optional via `bun run docker:up`. Stop the native runtime first and use `SLOPBOT_COMPUTER_URL=http://host.docker.internal:6080` for Docker on this Mac. Both variants use the same state; never run them concurrently against it.
+Docker remains optional via `bun run docker:up`. Stop the native runtime first and use `SLOPBOT_COMPUTER_URL=http://host.docker.internal:6080` for Docker on macOS. Both variants use the same state; never run them concurrently against it.
 
 | Directory | Purpose |
 |---|---|
