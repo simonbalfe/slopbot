@@ -34,6 +34,7 @@ if (action === "stop") {
     ThrottleInterval: 10,
     EnvironmentVariables: {
       HOME: homedir(),
+      ...(env.SLOPBOT_NOUS_CLIENT_ID ? { SLOPBOT_NOUS_CLIENT_ID: env.SLOPBOT_NOUS_CLIENT_ID } : {}),
       PATH: process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin",
       PORT: String(env.PORT),
       SLOPBOT_HOST: env.SLOPBOT_HOST,

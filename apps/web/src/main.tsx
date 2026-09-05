@@ -177,6 +177,8 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
 }
 
 function App(): React.ReactNode {
+  const [provider, setProvider] = useState<"openai-codex" | "nous">("openai-codex");
+  const [models, setModels] = useState<readonly { id: string; name: string }[]>([]);
   const [auth, setAuth] = useState<AuthState>();
   const [agents, setAgents] = useState<readonly Agent[]>([]);
   const [skills, setSkills] = useState<readonly Skill[]>([]);
@@ -198,7 +200,8 @@ function App(): React.ReactNode {
     setAuth(await api.auth.state());
   };
   const login = async (): Promise<void> => {
-    setAuth(await api.auth.login());
+    try { setAuth(await api.auth.login({ provider })); await refresh(); }
+    catch (error) { setAuth({ status: "error", message: errorText(error) }); }
   };
 
   const refresh = async (): Promise<void> => {
@@ -353,12 +356,16 @@ function App(): React.ReactNode {
             <span className="slop-wordmark">SlopBot</span>
           </div>
           <h1 className="text-2xl font-semibold">
-            Connect your Codex subscription
+            Connect your model provider
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            Sign in with ChatGPT Plus or Pro before starting the bots.
-            Credentials stay in your local SlopBot data volume.
+            Sign in with your OpenAI or Nous account. Credentials stay in your local SlopBot data directory.
           </p>
+          <label className="mt-4 block text-sm">Provider
+            <select className="ml-3 rounded bg-raised p-2" value={provider} onChange={(event) => { setProvider(event.target.value === "nous" ? "nous" : "openai-codex"); }} disabled={auth.status === "pending" || auth.status === "starting"}>
+              <option value="openai-codex">OpenAI Codex</option><option value="nous">Nous Portal</option>
+            </select>
+          </label>
           {auth.status === "pending" ? (
             <div className="mt-6 rounded-2xl bg-raised p-5">
               <div className="text-xs font-semibold tracking-[.08em] text-muted-foreground">
@@ -378,7 +385,7 @@ function App(): React.ReactNode {
                 target="_blank"
                 rel="noreferrer"
               >
-                Open OpenAI and sign in
+                Open provider and sign in
               </a>
               <p className="mt-3 text-center text-xs text-muted-foreground">
                 SlopBot will continue automatically after approval.
@@ -393,7 +400,7 @@ function App(): React.ReactNode {
             >
               {auth.status === "starting"
                 ? auth.message
-                : "Connect ChatGPT Plus / Pro"}
+                : `Sign in with ${provider === "nous" ? "Nous Portal" : "OpenAI"}`}
             </button>
           )}
           {auth.status === "error" && (
@@ -594,6 +601,17 @@ function App(): React.ReactNode {
             {settingsError}
           </p>
         )}
+        <div className="mb-5 grid gap-3 text-sm">
+          <p>Current model: {agent.provider} / {agent.model}</p>
+          <label>Provider <select className="rounded bg-raised p-2" value={provider} onChange={(event) => setProvider(event.target.value === "nous" ? "nous" : "openai-codex")}>
+            <option value="openai-codex">OpenAI Codex</option><option value="nous">Nous Portal</option>
+          </select></label>
+          <button className="rounded bg-brand p-2 text-zinc-900" onClick={() => void login()}>Sign in / switch provider</button>
+          <button onClick={() => void api.auth.models().then(setModels).catch((error: unknown) => setSettingsError(errorText(error)))}>Load available models</button>
+          <label>Model <select aria-label="Model" className="max-w-full rounded bg-raised p-2" value={agent.model} onChange={(event) => {
+            void api.agents.profile().then((profile) => api.agents.update({ ...profile, model: event.target.value })).then(refresh).catch((error: unknown) => setSettingsError(errorText(error)));
+          }}><option value={agent.model}>{agent.model}</option>{models.filter((item) => item.id !== agent.model).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        </div>
         <p className="text-sm">Bot configuration is stored in SQLite. Use <code>bun run chat</code> and <code>/config</code> to inspect or edit it.</p>
         <div className="my-5 border-t border-line" />
         <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
