@@ -9,6 +9,7 @@ const OptionalStringSchema = z.preprocess(
 
 export const SlopBotEnvSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(4317),
+  SLOPBOT_NOUS_CLIENT_ID: OptionalStringSchema,
   SLOPBOT_HOST: z.string().min(1).default("127.0.0.1"),
   SLOPBOT_WORKSPACE: z.string().min(1).optional(),
   SLOPBOT_DATA_DIR: z.string().min(1).optional(),

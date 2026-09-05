@@ -14,6 +14,7 @@ Read [`README.md`](README.md) first for the current architecture and local run c
 | [`packages/browser-runtime/README.md`](packages/browser-runtime/README.md) | Browser service contract and Agent Infra parity scope | Changing Chromium, CDP, VNC, or browser endpoints |
 | [`vm`](vm) | Lima computer VM, executor/desktop service, shared workspace | Changing local infrastructure or isolation |
 | [`docs/computer-api.md`](docs/computer-api.md) | Harness-independent file, shell, browser, and desktop interface | Changing the connection between Pi and its computer |
+| [`docs/nous-portal.md`](docs/nous-portal.md) | Nous subscription login, client registration prerequisite, and model selection | Changing Nous authentication or provider configuration |
 | [`.env.example`](.env.example) | Supported project environment variables | Adding or changing configuration |
 
 ## Architecture invariants

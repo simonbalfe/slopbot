@@ -16,6 +16,7 @@ import { remoteTools } from "../../../packages/core/src/remote-tools.ts";
 import { toolRelay } from "../../../packages/browser-runtime/src/tool-relay.ts";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { nousProvider } from "../../../packages/core/src/nous-provider.ts";
 import { responseMarkdown } from "./terminal.ts";
 
 const markdown = responseMarkdown("## Heading\n\n**bold** and `code`\n\n| Flag | Meaning |\n| --- | --- |\n| --test | Check |\n\n```sh\necho hello\n```\n");
@@ -31,6 +32,38 @@ markdown.setText("**streaming");
 markdown.render(36);
 markdown.setText("**streaming complete**");
 assert.ok(!stripVTControlCharacters(markdown.render(36).join("\n")).includes("**"));
+
+const requestsNous: { url: string; init: RequestInit }[] = [];
+let pollsNous = 0;
+const providerNous = nousProvider("slopbot-test", async (url, init) => {
+  requestsNous.push({ url, init });
+  if (url.endsWith("/device/code")) return Response.json({ device_code: "device", user_code: "ABCD", verification_uri: "https://portal.nousresearch.com/activate", expires_in: 60, interval: 0.001 });
+  if (new Headers(init.headers).has("x-nous-refresh-token")) return Response.json({ access_token: "refreshed", refresh_token: "rotated", expires_in: 3600 });
+  if (pollsNous++ === 0) return Response.json({ error: "authorization_pending" }, { status: 400 });
+  return Response.json({ access_token: "access", refresh_token: "refresh", expires_in: 3600, scope: "inference:invoke" });
+});
+assert.ok(providerNous.oauth);
+let deviceShown = false;
+const callbacksNous = { onAuth() {}, onDeviceCode() { deviceShown = true; }, onPrompt: async () => "", onSelect: async () => undefined };
+const credentialNous = await providerNous.oauth.login(callbacksNous);
+assert.ok(deviceShown);
+assert.equal(providerNous.oauth.getApiKey(credentialNous), "access");
+assert.equal(new URLSearchParams(String(requestsNous[0]?.init.body)).get("client_id"), "slopbot-test");
+const refreshedNous = await providerNous.oauth.refreshToken(credentialNous, new AbortController().signal);
+assert.equal(refreshedNous.refresh, "rotated");
+assert.equal(new Headers(requestsNous.at(-1)?.init.headers).get("x-nous-refresh-token"), "refresh");
+const missingNous = nousProvider().oauth;
+assert.ok(missingNous);
+await assert.rejects(missingNous.login(callbacksNous), /SLOPBOT_NOUS_CLIENT_ID/);
+const deniedNous = nousProvider("slopbot-test", async (url) => url.endsWith("/device/code")
+  ? Response.json({ device_code: "device", user_code: "ABCD", verification_uri: "https://portal.nousresearch.com/activate", expires_in: 60, interval: 0.001 })
+  : Response.json({ error: "access_denied" }, { status: 400 })).oauth;
+assert.ok(deniedNous);
+await assert.rejects(deniedNous.login(callbacksNous), /denied/);
+const cancelledNous = new AbortController();
+cancelledNous.abort();
+await assert.rejects(providerNous.oauth.login({ ...callbacksNous, signal: cancelledNous.signal }));
+await assert.rejects(providerNous.oauth.refreshToken({ ...credentialNous, clientId: "different" }, new AbortController().signal), /client ID changed/);
 
 class CheckRuntime extends PiRuntime {
   optionsSeen: ThreadOptions | undefined;
@@ -103,6 +136,9 @@ try {
   assert.ok(runtime.optionsSeen?.developerInstructions?.includes(`Your host workspace is ${directory}`));
   assert.ok(runtime.optionsSeen?.developerInstructions?.includes("tools operate locally on this host"));
   const thread = controller.listAgents()[0]?.threadId;
+  await controller.updateBot({ ...controller.botProfile(), provider: "nous", model: "test/model" });
+  assert.equal(controller.botProfile().provider, "nous");
+  assert.equal(runtime.optionsSeen?.model, "test/model");
   await assert.rejects(controller.updateBot({ name: "", role: "Role", instructions: "Instructions" }));
   const handler = new RPCHandler({
     auth: { state: os.handler(() => ({ status: "authenticated" })) },
@@ -137,6 +173,8 @@ try {
   try {
     await restored.initialize();
     assert.equal(restored.botProfile().name, "Nova");
+    assert.equal(restored.botProfile().provider, "nous");
+    assert.equal(restored.botProfile().model, "test/model");
     assert.equal(restored.listAgents()[0]?.threadId, thread);
     assert.ok(restored.listAgents()[0]?.messages.some((message) => message.text === "Verified browser response"));
   } finally { restored.close(); }

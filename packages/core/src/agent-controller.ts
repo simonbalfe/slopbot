@@ -60,6 +60,8 @@ export const UpdateAgentInputSchema = z.object({
   name: textSchema(50),
   role: textSchema(200),
   instructions: textSchema(2_000),
+  provider: z.enum(["openai-codex", "nous"]).optional(),
+  model: textSchema(200).optional(),
 });
 
 export type AgentControllerOptions = Readonly<
@@ -79,6 +81,8 @@ const messageRetryLimit = 3;
 
 export const defaultAgentProfiles = [{
   id: createAgentId("lead"),
+  provider: "openai-codex",
+  model: "gpt-5.6-sol",
   name: "SlopBot",
   aliases: ["lead", "slopbot"],
   role: "Personal assistant for research and implementation",
@@ -294,6 +298,8 @@ export class AgentController {
   ): ThreadOptions {
     return {
       cwd: this.options.cwd,
+      provider: profile.provider,
+      model: profile.model,
       approvalPolicy: "never",
       sandbox: this.sandboxFor(profile),
       serviceName: "slopbot",
@@ -330,6 +336,8 @@ export class AgentController {
     return {
       id: agent.profile.id,
       name: agent.profile.name,
+      provider: agent.profile.provider,
+      model: agent.profile.model,
       role: agent.profile.role,
       sandbox: this.sandboxFor(agent.profile),
       threadId: agent.threadId,

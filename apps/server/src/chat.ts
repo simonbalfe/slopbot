@@ -12,7 +12,7 @@ import { SlopBotTerminal } from "./terminal.ts";
 
 let terminal: SlopBotTerminal | undefined;
 
-const help = "/clear · /config · /name TEXT · /role TEXT · /instructions TEXT · /computer · /login · /quit";
+const help = "/clear · /config · /name TEXT · /role TEXT · /instructions TEXT · /computer · /login [nous|openai-codex] · /models · /model ID · /quit";
 const address = z.url().parse(process.argv[2] ?? `http://127.0.0.1:${process.env["PORT"] ?? "4317"}`);
 const api: AppClient = createORPCClient(new RPCLink({
   url: new URL("/rpc", address).href,
@@ -24,10 +24,10 @@ function output(value: string): void {
   process.stdout.write(stripVTControlCharacters(value).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ""));
 }
 
-async function login(): Promise<void> {
+async function login(provider?: "nous" | "openai-codex"): Promise<void> {
   let state = await api.auth.state();
-  if (state.status === "authenticated") return;
-  state = await api.auth.login();
+  if (state.status === "authenticated" && !provider) return;
+  state = await api.auth.login(provider ? { provider } : undefined);
   let displayed = "";
   while (state.status !== "authenticated") {
     if (state.status === "error") throw new Error(state.message);
@@ -40,6 +40,7 @@ async function login(): Promise<void> {
     state = await api.auth.state();
   }
   output("Signed in.\n");
+  if (provider === "nous") output("Use /models to list available models, then /model MODEL_ID to select one.\n");
 }
 
 async function chat(text: string): Promise<void> {
@@ -69,7 +70,6 @@ async function chat(text: string): Promise<void> {
 async function main(): Promise<void> {
   if (process.stdin.isTTY && process.stdout.isTTY) terminal = new SlopBotTerminal();
   else output(`SlopBot\n`);
-  await login();
   const profile = await api.agents.profile();
   if (!terminal) output(`Connected to ${profile.name}.\n`);
   const input = terminal ? undefined : createInterface({ input: process.stdin, output: process.stdout, terminal: false });
@@ -82,10 +82,21 @@ async function main(): Promise<void> {
           if (terminal) terminal.clear();
           else { cursorTo(process.stdout, 0, 0); clearScreenDown(process.stdout); }
         } else if (text === "/help") output(`${help}\n`);
-        else if (text === "/login") await login();
+        else if (text === "/login" || text.startsWith("/login ")) {
+          const provider = text.split(/\s+/)[1];
+          if (provider !== undefined && provider !== "nous" && provider !== "openai-codex") throw new Error("Use /login nous or /login openai-codex");
+          await login(provider);
+        } else if (text === "/models") output((await api.auth.models()).map((model) => model.id).join("\n") + "\n");
+        else if (text.startsWith("/model ")) {
+          const model = text.slice(7).trim();
+          if (!(await api.auth.models()).some((item) => item.id === model)) throw new Error("Choose an available model from /models");
+          const profile = await api.agents.profile();
+          await api.agents.update({ ...profile, model });
+          output("Model selected.\n");
+        }
         else if (text === "/config") {
-          const { name, role, instructions } = await api.agents.profile();
-          output(JSON.stringify({ name, role, instructions }, null, 2) + "\n");
+          const { name, role, instructions, provider, model } = await api.agents.profile();
+          output(JSON.stringify({ name, role, instructions, provider, model }, null, 2) + "\n");
         } else if (text === "/browser" || text === "/computer") {
           const [bot] = await api.agents.list();
           output(`${bot?.desktop?.viewerUrl ?? "Computer is not configured"}\n`);

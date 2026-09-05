@@ -29,6 +29,8 @@ const StoredAgentRowSchema = z.object({
   role: z.string(),
   sandbox: z.string(),
   instructions: z.string(),
+  provider: z.string(),
+  model: z.string(),
   threadId: ThreadIdSchema.nullable(),
   threadConfig: z.string().nullable(),
 });
@@ -119,6 +121,8 @@ export class AgentStore {
     if (!columns.some(({ name }) => name === "thread_config")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN thread_config TEXT");
     }
+    if (!columns.some(({ name }) => name === "provider")) this.database.exec("ALTER TABLE agents ADD COLUMN provider TEXT NOT NULL DEFAULT 'openai-codex'");
+    if (!columns.some(({ name }) => name === "model")) this.database.exec("ALTER TABLE agents ADD COLUMN model TEXT NOT NULL DEFAULT 'gpt-5.6-sol'");
     const messageColumns = ColumnSchema.array().parse(
       this.database.query("PRAGMA table_info(message_envelopes)").all(),
     );
@@ -158,8 +162,8 @@ export class AgentStore {
 
   updateProfile(profile: AgentProfile): void {
     const parsed = AgentProfileSchema.parse(profile);
-    this.database.query("UPDATE agents SET name = ?, role = ?, instructions = ?, sandbox = ?, aliases_json = ?, updated_at = ? WHERE id = ?")
-      .run(parsed.name, parsed.role, parsed.instructions, parsed.sandbox, JSON.stringify(parsed.aliases), new Date().toISOString(), parsed.id);
+    this.database.query("UPDATE agents SET name = ?, role = ?, instructions = ?, provider = ?, model = ?, sandbox = ?, aliases_json = ?, updated_at = ? WHERE id = ?")
+      .run(parsed.name, parsed.role, parsed.instructions, parsed.provider, parsed.model, parsed.sandbox, JSON.stringify(parsed.aliases), new Date().toISOString(), parsed.id);
   }
 
   upsertProfiles(profiles: readonly AgentProfile[]): void {
@@ -220,7 +224,7 @@ export class AgentStore {
 
   getAgent(agentId: AgentId): StoredAgent | undefined {
     const row = this.database.query(`
-      SELECT id, name, aliases_json AS aliasesJson, role, sandbox, instructions,
+      SELECT id, name, aliases_json AS aliasesJson, role, sandbox, instructions, provider, model,
         thread_id AS threadId, thread_config AS threadConfig
       FROM agents WHERE id = ?
     `).get(agentId);
@@ -229,7 +233,7 @@ export class AgentStore {
 
   listAgents(): readonly StoredAgent[] {
     return this.database.query(`
-      SELECT id, name, aliases_json AS aliasesJson, role, sandbox, instructions,
+      SELECT id, name, aliases_json AS aliasesJson, role, sandbox, instructions, provider, model,
         thread_id AS threadId, thread_config AS threadConfig
       FROM agents ORDER BY created_at, id
     `).all().map((row) => this.parseAgent(row));
@@ -433,8 +437,8 @@ export class AgentStore {
     const now = new Date().toISOString();
     this.database.query(`
       INSERT INTO agents
-        (id, name, aliases_json, role, sandbox, instructions, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (id, name, aliases_json, role, sandbox, instructions, provider, model, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       validated.id,
       validated.name,
@@ -442,6 +446,8 @@ export class AgentStore {
       validated.role,
       validated.sandbox,
       validated.instructions,
+      validated.provider,
+      validated.model,
       now,
       now,
     );

@@ -1,3 +1,5 @@
+import { nousProvider, nousModels } from "./nous-provider.ts";
+import { ModelSelectionSchema } from "./agent-types.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,6 +53,7 @@ export const DynamicToolSchema = z.object({
 });
 export const ThreadOptionsSchema = z.object({
   cwd: z.string().min(1),
+  ...ModelSelectionSchema.shape,
   approvalPolicy: ApprovalPolicySchema,
   sandbox: SandboxModeSchema,
   serviceName: z.string().min(1).optional(),
@@ -100,6 +103,7 @@ export type { SandboxMode, ThreadId } from "./runtime-types.ts";
 type ManagedSession = Readonly<{
   session: AgentSession;
   unsubscribe: () => void;
+  options: ThreadOptions;
 }>;
 
 export class PiRuntime {
@@ -121,6 +125,7 @@ export class PiRuntime {
   async connect(): Promise<void> {
     if (this.modelRuntime) return;
     this.modelRuntime = await ModelRuntime.create();
+    this.modelRuntime.registerProvider("nous", nousProvider(process.env["SLOPBOT_NOUS_CLIENT_ID"]));
     this.skillLoader = await this.createResourceLoader(this.options.cwd);
   }
 
@@ -133,21 +138,22 @@ export class PiRuntime {
     this.sessions.clear();
   }
 
-  async getAuthState(): Promise<PiAuthState> {
+  async getAuthState(provider = "openai-codex"): Promise<PiAuthState> {
     if (this.authLogin) return this.authState;
-    const authenticated = Boolean(await this.modelRuntime?.getAuth("openai-codex"));
+    if (this.authState.status === "error") return this.authState;
+    const authenticated = Boolean(await this.modelRuntime?.getAuth(provider));
     this.authState = authenticated ? { status: "authenticated" } : { status: "unauthenticated" };
     return this.authState;
   }
 
-  async startCodexLogin(): Promise<PiAuthState> {
-    if ((await this.getAuthState()).status === "authenticated" || this.authLogin) return this.authState;
+  async startLogin(provider = "openai-codex"): Promise<PiAuthState> {
+    if ((await this.getAuthState(provider)).status === "authenticated" || this.authLogin) return this.authState;
     const modelRuntime = this.modelRuntime;
     if (!modelRuntime) throw new Error("Pi runtime is not connected");
     const controller = new AbortController();
     this.authController = controller;
-    this.authState = { status: "starting", message: "Starting OpenAI Codex login" };
-    this.authLogin = modelRuntime.login("openai-codex", "oauth", {
+    this.authState = { status: "starting", message: `Starting ${provider} login` };
+    this.authLogin = modelRuntime.login(provider, "oauth", {
       signal: controller.signal,
       prompt: async (prompt) => {
         if (prompt.type === "select") {
@@ -176,6 +182,17 @@ export class PiRuntime {
       this.authLogin = undefined;
     });
     return this.authState;
+  }
+
+  async listModels(provider = "openai-codex"): Promise<readonly { id: string; name: string }[]> {
+    const runtime = this.modelRuntime;
+    if (!runtime) throw new Error("Runtime is not connected");
+    if (provider === "nous") {
+      const auth = await runtime.getAuth("nous");
+      if (!auth?.auth.apiKey) throw new Error("Sign in to Nous first.");
+      runtime.registerProvider("nous", { ...nousProvider(process.env["SLOPBOT_NOUS_CLIENT_ID"]), models: await nousModels(auth.auth.apiKey) });
+    }
+    return runtime.getModels(provider).map(({ id, name }) => ({ id, name }));
   }
 
   async listSkills(): Promise<readonly Skill[]> {
@@ -243,12 +260,14 @@ export class PiRuntime {
   }
 
   async startTurn(threadId: ThreadId, input: readonly TurnInput[]): Promise<TurnId> {
-    if (!await this.modelRuntime?.getAuth("openai-codex")) {
-      throw new Error("Pi is not logged in to ChatGPT Plus/Pro. Run /login in Pi and choose OpenAI Codex.");
-    }
     const parsedId = ThreadIdSchema.parse(threadId);
     const managed = this.sessions.get(parsedId);
     if (!managed) throw new Error(`Pi session not loaded: ${threadId}`);
+    if (!await this.modelRuntime?.getAuth(managed.options.provider)) throw new Error("Sign in to the selected provider with /login.");
+    if (managed.options.provider === "nous" && !this.modelRuntime?.getModel("nous", managed.options.model)) await this.listModels("nous");
+    const selected = this.modelRuntime?.getModel(managed.options.provider, managed.options.model);
+    if (!selected) throw new Error("Selected model is unavailable. Use /models and /model to choose one.");
+    await managed.session.setModel(selected);
     const parsedInput = z.array(TurnInputSchema).min(1).parse(input);
     const text = parsedInput.filter((item): item is TextInput => item.type === "text").map((item) => item.text).join("\n\n");
     const skill = parsedInput.find((item): item is SkillInput => item.type === "skill");
@@ -312,7 +331,7 @@ export class PiRuntime {
     });
     const unsubscribe = session.subscribe((event) => this.handleSessionEvent(threadId, event));
     this.discardThread(threadId);
-    this.sessions.set(threadId, { session, unsubscribe });
+    this.sessions.set(threadId, { session, unsubscribe, options });
     return threadId;
   }
 

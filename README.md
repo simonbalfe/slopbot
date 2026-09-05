@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/simonbalfe/slopbot/main/install.sh 
 
 The installer installs Bun if needed, builds the dashboard, and creates `~/.local/bin/slopbot`. Git is required. Remote installation defaults to `~/.local/share/slopbot`; override with `SLOPBOT_INSTALL_DIR`. Override the command directory with `SLOPBOT_BIN_DIR`. Existing destination directories are never overwritten. Lima is optional: install it with `brew install lima` for computer access.
 
-This starts SlopBot natively and opens terminal chat. Run `bun run vm:up` when you want the separate computer available. On first use, follow the printed Codex login URL and enter its device code. The current model is OpenAI Codex; Grok model support is planned.
+This starts SlopBot natively and opens terminal chat. Run `bun run vm:up` when you want the separate computer available. Use `/login openai-codex` for OpenAI, or see [Nous Portal setup](docs/nous-portal.md) for subscription login and model selection.
 
 | Command | Action |
 |---|---|
