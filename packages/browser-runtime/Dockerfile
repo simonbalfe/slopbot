@@ -9,9 +9,11 @@ COPY package.json bun.lock tsconfig.json ./
 COPY apps/server/package.json ./apps/server/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/core/package.json ./packages/core/package.json
+COPY packages/contracts/package.json ./packages/contracts/package.json
 COPY packages/browser-runtime/package.json ./packages/browser-runtime/package.json
 RUN bun install --frozen-lockfile --production --filter @slopbot/browser-runtime
 COPY packages/browser-runtime ./packages/browser-runtime
+COPY packages/contracts ./packages/contracts
 
 ENV BROWSER_PROFILE_DIR=/data/browser
 ENV BROWSER_WORKSPACE=/workspace

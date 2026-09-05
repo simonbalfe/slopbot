@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { RelayCatalogSchema, RelayResultSchema } from "../../browser-runtime/src/desktop-protocol.ts";
+import { RelayCatalogSchema, RelayResultSchema } from "@slopbot/contracts/computer";
 
 export async function remoteTools(url: string, cwd: string, apiKey?: string): Promise<ToolDefinition[]> {
   const endpoint = `${url.replace(/\/$/, "")}/v1/tools`;

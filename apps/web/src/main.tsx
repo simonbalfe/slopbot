@@ -1,3 +1,7 @@
+import { defaultProvider, providers, providerChoices, ProviderIdSchema } from "@slopbot/contracts/providers";
+import type { ProviderId } from "@slopbot/contracts/providers";
+import { Desktop } from "@/components/desktop";
+import { Settings } from "@/components/settings";
 import { createRoot } from "react-dom/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
@@ -15,8 +19,6 @@ import "./index.css";
 
 type Agent = Awaited<ReturnType<typeof api.agents.list>>[number];
 type Message = Agent["messages"][number];
-type Skill = Awaited<ReturnType<typeof api.skills.list>>[number];
-type BrowserInput = Parameters<typeof api.agents.browserInput>[0]["input"];
 type AuthState = Awaited<ReturnType<typeof api.auth.state>>;
 type ImageAttachment = NonNullable<
   Parameters<typeof api.agents.send>[0]["images"]
@@ -177,19 +179,13 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
 }
 
 function App(): React.ReactNode {
-  const [provider, setProvider] = useState<"openai-codex" | "nous">("openai-codex");
-  const [models, setModels] = useState<readonly { id: string; name: string }[]>([]);
+  const [provider, setProvider] = useState<ProviderId>(defaultProvider);
   const [auth, setAuth] = useState<AuthState>();
   const [agents, setAgents] = useState<readonly Agent[]>([]);
-  const [skills, setSkills] = useState<readonly Skill[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [prompt, setPrompt] = useState("");
   const [images, setImages] = useState<readonly ImageAttachment[]>([]);
   const [composerError, setComposerError] = useState("");
-  const [screenUrl, setScreenUrl] = useState("");
-  const [expanded, setExpanded] = useState(false);
-  const [settingsError, setSettingsError] = useState("");
-  const viewer = useRef<HTMLImageElement>(null);
   const settings = useRef<HTMLDialogElement>(null);
   const agent = useMemo(
     () => agents.find((item) => item.id === selectedId) ?? agents[0],
@@ -199,16 +195,13 @@ function App(): React.ReactNode {
   const refreshAuth = async (): Promise<void> => {
     setAuth(await api.auth.state());
   };
-  const login = async (): Promise<void> => {
-    try { setAuth(await api.auth.login({ provider })); await refresh(); }
+  const login = async (selectedProvider: ProviderId = provider): Promise<void> => {
+    try { setAuth(await api.auth.login({ provider: selectedProvider })); await refresh(); }
     catch (error) { setAuth({ status: "error", message: errorText(error) }); }
   };
 
   const refresh = async (): Promise<void> => {
     setAgents(await api.agents.list());
-  };
-  const refreshSkills = async (): Promise<void> => {
-    setSkills(await api.skills.list());
   };
   useEffect(() => {
     void refreshAuth();
@@ -219,41 +212,9 @@ function App(): React.ReactNode {
   useEffect(() => {
     if (auth?.status !== "authenticated") return;
     void refresh();
-    void refreshSkills();
     const timer = window.setInterval(() => void refresh(), 500);
     return () => window.clearInterval(timer);
   }, [auth?.status]);
-  useEffect(() => {
-    if (!agent?.desktop) {
-      setScreenUrl((current) => {
-        if (current) URL.revokeObjectURL(current);
-        return "";
-      });
-      return;
-    }
-    let cancelled = false;
-    const frame = async (): Promise<void> => {
-      try {
-        const response = await fetch(
-          `/api/agents/${agent.id}/browser/screenshot?at=${Date.now()}`,
-        );
-        if (!response.ok || cancelled) return;
-        const url = URL.createObjectURL(await response.blob());
-        if (!cancelled)
-          setScreenUrl((current) => {
-            if (current) URL.revokeObjectURL(current);
-            return url;
-          });
-        else URL.revokeObjectURL(url);
-      } finally {
-        if (!cancelled) window.setTimeout(() => void frame(), 750);
-      }
-    };
-    void frame();
-    return () => {
-      cancelled = true;
-    };
-  }, [agent?.desktop?.viewerUrl, agent?.id]);
 
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
@@ -290,57 +251,6 @@ function App(): React.ReactNode {
       setComposerError(errorText(error));
     }
   };
-  const clear = async (): Promise<void> => {
-    if (
-      !agent ||
-      !window.confirm(`Clear ${agent.name}'s chat and start a fresh thread?`)
-    )
-      return;
-    await api.agents.clear({ agentId: agent.id });
-    settings.current?.close();
-    await refresh();
-  };
-  const createSkill = async (
-    event: React.FormEvent<HTMLFormElement>,
-  ): Promise<void> => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const fields = new FormData(form);
-    setSettingsError("");
-    try {
-      await api.skills.create({
-        name: String(fields.get("name") ?? ""),
-        description: String(fields.get("description") ?? ""),
-        content: String(fields.get("content") ?? ""),
-      });
-      form.reset();
-      await refreshSkills();
-    } catch (error) {
-      setSettingsError(errorText(error));
-    }
-  };
-  const browserInput = async (input: BrowserInput): Promise<void> => {
-    if (agent?.desktop)
-      await api.agents.browserInput({ agentId: agent.id, input });
-  };
-  const point = (
-    event: React.PointerEvent | React.WheelEvent,
-  ): { x: number; y: number } | undefined => {
-    const image = viewer.current;
-    if (!image?.naturalWidth || !image.naturalHeight) return undefined;
-    const rect = image.getBoundingClientRect(),
-      scale = Math.min(
-        rect.width / image.naturalWidth,
-        rect.height / image.naturalHeight,
-      );
-    const width = image.naturalWidth * scale,
-      height = image.naturalHeight * scale,
-      x = event.clientX - rect.left - (rect.width - width) / 2,
-      y = event.clientY - rect.top - (rect.height - height) / 2;
-    return x < 0 || y < 0 || x > width || y > height
-      ? undefined
-      : { x: x / scale, y: y / scale };
-  };
   if (!auth)
     return (
       <main className="grid h-screen place-items-center bg-app text-muted-foreground">
@@ -362,8 +272,8 @@ function App(): React.ReactNode {
             Sign in with your OpenAI or Nous account. Credentials stay in your local SlopBot data directory.
           </p>
           <label className="mt-4 block text-sm">Provider
-            <select className="ml-3 rounded bg-raised p-2" value={provider} onChange={(event) => { setProvider(event.target.value === "nous" ? "nous" : "openai-codex"); }} disabled={auth.status === "pending" || auth.status === "starting"}>
-              <option value="openai-codex">OpenAI Codex</option><option value="nous">Nous Portal</option>
+            <select className="ml-3 rounded bg-raised p-2" value={provider} onChange={(event) => { setProvider(ProviderIdSchema.parse(event.target.value)); }} disabled={auth.status === "pending" || auth.status === "starting"}>
+              {providerChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
           {auth.status === "pending" ? (
@@ -400,7 +310,7 @@ function App(): React.ReactNode {
             >
               {auth.status === "starting"
                 ? auth.message
-                : `Sign in with ${provider === "nous" ? "Nous Portal" : "OpenAI"}`}
+                : `Sign in with ${providers[provider].name}`}
             </button>
           )}
           {auth.status === "error" && (
@@ -520,160 +430,8 @@ function App(): React.ReactNode {
           </div>
         </form>
       </section>
-      <aside
-        className={`flex min-h-0 flex-col border-l border-line bg-panel p-4 ${expanded ? "fixed inset-0 z-10 border-l-0" : ""}`}
-      >
-        <div className="pb-2 text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
-          LIVE DESKTOP
-        </div>
-        {agent.desktop ? (
-          <img
-            ref={viewer}
-            className={`w-full rounded-xl border border-line bg-zinc-800 object-contain ${expanded ? "min-h-0 flex-1" : "aspect-video"}`}
-            src={screenUrl}
-            alt={`${agent.name} desktop`}
-            onPointerUp={(event) => {
-              const position = point(event);
-              if (position)
-                void browserInput({
-                  type: "click",
-                  ...position,
-                  button: "left",
-                  clickCount: 1,
-                });
-            }}
-            onWheel={(event) => {
-              const position = point(event);
-              if (!position) return;
-              event.preventDefault();
-              void browserInput({
-                type: "scroll",
-                deltaX: event.deltaX,
-                deltaY: event.deltaY,
-              });
-            }}
-          />
-        ) : (
-          <div className="grid aspect-video place-items-center rounded-xl border border-line bg-zinc-900 px-6 text-center text-xs text-muted-foreground">
-            No computer assigned. This bot can still use Pi, files, shell,
-            messaging, and skills.
-          </div>
-        )}
-        <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
-          <span>{agent.desktop ? `${agent.name} desktop` : "No computer"}</span>
-          <span className="flex gap-3">
-            {agent.desktop?.viewerUrl && (
-              <a
-                href={agent.desktop.viewerUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-zinc-100"
-              >
-                Open login
-              </a>
-            )}
-            {agent.desktop && (
-              <button
-                className="text-zinc-100"
-                onClick={() => setExpanded((value) => !value)}
-              >
-                {expanded ? "Exit" : "Expand"}
-              </button>
-            )}
-          </span>
-        </div>
-      </aside>
-      <dialog
-        className="max-h-[80vh] w-[min(680px,calc(100vw-2rem))] overflow-auto rounded-2xl border border-line bg-[#171719] p-5 text-zinc-100 backdrop:bg-black/60"
-        ref={settings}
-      >
-        <div className="mb-5 flex items-center justify-between">
-          <b>Settings</b>
-          <button
-            onClick={() => settings.current?.close()}
-            className="text-sm text-muted-foreground"
-          >
-            Close
-          </button>
-        </div>
-        {settingsError && (
-          <p className="mb-4 rounded-lg bg-red-950 p-3 text-sm text-red-200">
-            {settingsError}
-          </p>
-        )}
-        <div className="mb-5 grid gap-3 text-sm">
-          <p>Current model: {agent.provider} / {agent.model}</p>
-          <label>Provider <select className="rounded bg-raised p-2" value={provider} onChange={(event) => setProvider(event.target.value === "nous" ? "nous" : "openai-codex")}>
-            <option value="openai-codex">OpenAI Codex</option><option value="nous">Nous Portal</option>
-          </select></label>
-          <button className="rounded bg-brand p-2 text-zinc-900" onClick={() => void login()}>Sign in / switch provider</button>
-          <button onClick={() => void api.auth.models().then(setModels).catch((error: unknown) => setSettingsError(errorText(error)))}>Load available models</button>
-          <label>Model <select aria-label="Model" className="max-w-full rounded bg-raised p-2" value={agent.model} onChange={(event) => {
-            void api.agents.profile().then((profile) => api.agents.update({ ...profile, model: event.target.value })).then(refresh).catch((error: unknown) => setSettingsError(errorText(error)));
-          }}><option value={agent.model}>{agent.model}</option>{models.filter((item) => item.id !== agent.model).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        </div>
-        <p className="text-sm">Bot configuration is stored in SQLite. Use <code>bun run chat</code> and <code>/config</code> to inspect or edit it.</p>
-        <div className="my-5 border-t border-line" />
-        <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
-          ENABLED PI SKILLS ({skills.length})
-        </div>
-        <details className="mt-2 rounded-xl border border-line p-3">
-          <summary className="cursor-pointer text-sm font-semibold">
-            Add skill
-          </summary>
-          <form className="mt-3 grid gap-2" onSubmit={createSkill}>
-            <input
-              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
-              name="name"
-              placeholder="skill-name"
-              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-              required
-            />
-            <input
-              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
-              name="description"
-              placeholder="When should Pi use this skill?"
-              required
-            />
-            <textarea
-              className="min-h-32 rounded-lg border border-line bg-raised px-3 py-2 font-mono text-sm"
-              name="content"
-              placeholder="Skill instructions"
-              required
-            />
-            <button className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-zinc-900">
-              Create skill
-            </button>
-          </form>
-        </details>
-        <div className="mt-2 grid max-h-[55vh] gap-2 overflow-auto">
-          {skills.map((skill) => (
-            <details className="rounded-xl bg-zinc-800 p-3" key={skill.name}>
-              <summary className="cursor-pointer text-xs font-semibold">
-                ${skill.name}
-              </summary>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {skill.description}
-              </p>
-              <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-xs leading-5 text-zinc-300">
-                {skill.content}
-              </pre>
-            </details>
-          ))}
-        </div>
-        <div className="mt-5 flex items-center justify-between border-t border-line pt-4">
-          <small className="max-w-48 text-muted-foreground">
-            Clear this agent’s visible chat and start a fresh thread.
-          </small>
-          <button
-            className="rounded-lg bg-red-950 px-3 py-2 text-sm text-red-200 disabled:opacity-40"
-            disabled={agent.status === "running" || !agent.messages.length}
-            onClick={() => void clear()}
-          >
-            Clear chat
-          </button>
-        </div>
-      </dialog>
+      <Desktop agent={agent} />
+      <Settings agent={agent} settings={settings} refresh={refresh} login={login} />
     </main>
   );
 }

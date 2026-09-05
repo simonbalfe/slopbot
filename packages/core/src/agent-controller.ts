@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { toolParameters } from "@slopbot/contracts/computer";
+import { defaultProvider, defaultModel, ProviderIdSchema } from "@slopbot/contracts/providers";
 import { z } from "zod";
 
 import { AgentStore } from "./agent-store.ts";
@@ -24,7 +25,7 @@ import {
   ComputerArgumentsSchema,
 } from "./sandbox-browser.ts";
 import type { SandboxBrowser } from "./sandbox-browser.ts";
-import { PiRuntime } from "./pi-runtime.ts";
+import type { AgentRuntime } from "./pi-runtime.ts";
 import type {
   DynamicTool,
   CreateSkillInput,
@@ -60,7 +61,7 @@ export const UpdateAgentInputSchema = z.object({
   name: textSchema(50),
   role: textSchema(200),
   instructions: textSchema(2_000),
-  provider: z.enum(["openai-codex", "nous"]).optional(),
+  provider: ProviderIdSchema.optional(),
   model: textSchema(200).optional(),
 });
 
@@ -81,8 +82,8 @@ const messageRetryLimit = 3;
 
 export const defaultAgentProfiles = [{
   id: createAgentId("lead"),
-  provider: "openai-codex",
-  model: "gpt-5.6-sol",
+  provider: defaultProvider,
+  model: defaultModel,
   name: "SlopBot",
   aliases: ["lead", "slopbot"],
   role: "Personal assistant for research and implementation",
@@ -95,39 +96,14 @@ const browserTool = {
   name: "browser",
   description:
     "Control your assigned sandbox browser. Navigate, inspect visible text, click a CSS selector, type into a selector, or evaluate page JavaScript.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      action: {
-        type: "string",
-        enum: ["navigate", "snapshot", "click", "type", "evaluate"],
-      },
-      url: { type: "string" },
-      selector: { type: "string" },
-      text: { type: "string" },
-      expression: { type: "string" },
-    },
-    required: ["action"],
-    additionalProperties: false,
-  },
+  inputSchema: toolParameters(BrowserArgumentsSchema),
 } satisfies DynamicTool;
 
 const computerTool = {
   type: "function",
   name: "computer",
   description: "Control the separate Linux VM desktop shared with the user. Take a screenshot before using pixel coordinates (1280x1024). Click, type literal text, scroll, or press X11 keys such as Return, ctrl+l, alt+F2. Launch VM apps through its desktop terminal or Run dialog, not the host bash tool. Screenshots return images.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      action: { type: "string", enum: ["screenshot", "click", "type", "key", "scroll"] },
-      x: { type: "integer" }, y: { type: "integer" },
-      button: { type: "string", enum: ["left", "middle", "right"] },
-      clickCount: { type: "integer" }, text: { type: "string" }, key: { type: "string" },
-      direction: { type: "string", enum: ["up", "down", "left", "right"] }, amount: { type: "integer" },
-    },
-    required: ["action"],
-    additionalProperties: false,
-  },
+  inputSchema: toolParameters(ComputerArgumentsSchema),
 } satisfies DynamicTool;
 
 export class AgentController {
@@ -139,7 +115,7 @@ export class AgentController {
   private skills: readonly Skill[] = [];
 
   constructor(
-    private readonly runtime: PiRuntime,
+    private readonly runtime: AgentRuntime,
     options: AgentControllerOptions,
   ) {
     this.options = AgentControllerOptionsSchema.parse(options);
@@ -185,7 +161,7 @@ export class AgentController {
     agent.status = "running";
     try {
       this.store.updateProfile(profile);
-      await this.loadAgent({ profile, threadId: agent.threadId, threadConfig: null });
+      await this.loadAgent({ profile, threadId: agent.threadId });
       this.schedule(this.agent(profile.id));
       return profile;
     } catch (error) {
@@ -248,11 +224,7 @@ export class AgentController {
     const threadId = await this.runtime.startThread(options);
     const updated = { ...agent, threadId, status: "idle" } satisfies Agent;
     this.store.clearAgentChat(agent.profile.id);
-    this.store.setThread(
-      agent.profile.id,
-      threadId,
-      this.threadConfig(options),
-    );
+    this.store.setThread(agent.profile.id, threadId);
     this.agents.set(agent.profile.id, updated);
     return this.view(updated);
   }
@@ -268,7 +240,6 @@ export class AgentController {
   private async loadAgent(stored: StoredAgent): Promise<void> {
     const desktop = this.assignDesktop(stored.profile.id);
     const options = this.threadOptions(stored.profile, desktop);
-    const threadConfig = this.threadConfig(options);
     let threadId = stored.threadId;
     if (threadId) {
       try {
@@ -283,7 +254,7 @@ export class AgentController {
     if (!threadId) {
       threadId = await this.runtime.startThread(options);
     }
-    this.store.setThread(stored.profile.id, threadId, threadConfig);
+    this.store.setThread(stored.profile.id, threadId);
     this.agents.set(stored.profile.id, {
       profile: stored.profile,
       threadId,
@@ -345,10 +316,6 @@ export class AgentController {
       messages: [...this.store.listMessages(agent.profile.id)],
       status: agent.status,
     };
-  }
-
-  private threadConfig(options: ThreadOptions): string {
-    return createHash("sha256").update(JSON.stringify(options)).digest("hex");
   }
 
   private agent(agentId: AgentId): Agent {

@@ -2,7 +2,7 @@
 
 An agent harness connects to one HTTP base URL. That computer owns the working filesystem, shell processes, Chromium profile, and desktop. The service runs no model or agent session and needs no model credentials.
 
-SlopBot uses this API for browser and desktop control. Its standard file and shell tools run locally on the runtime host. The optional [remote-tools.ts](../packages/core/src/remote-tools.ts) adapter and executor endpoints remain available for other harnesses. JSON request/response schemas live in [desktop-protocol.ts](../packages/browser-runtime/src/desktop-protocol.ts); browser operations are listed in the [desktop service reference](../packages/browser-runtime/README.md).
+SlopBot uses this API for browser and desktop control. Its standard file and shell tools run locally on the runtime host. The optional [remote-tools.ts](../packages/core/src/remote-tools.ts) adapter and executor endpoints remain available for other harnesses. JSON request/response schemas live in [computer.ts](../packages/contracts/src/computer.ts); browser operations are listed in the [desktop service reference](../packages/browser-runtime/README.md).
 
 ## Connect
 

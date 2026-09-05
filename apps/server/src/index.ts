@@ -1,3 +1,4 @@
+import { ProviderIdSchema, providers } from "@slopbot/contracts/providers";
 import { join, relative } from "node:path";
 
 import { os } from "@orpc/server";
@@ -53,10 +54,10 @@ await agents.initialize();
 export const appRouter = {
   auth: {
     state: os.handler(() => runtime.getAuthState(agents.botProfile().provider)),
-    login: os.input(z.object({ provider: z.enum(["openai-codex", "nous"]).optional() }).optional()).handler(async ({ input }) => {
+    login: os.input(z.object({ provider: ProviderIdSchema.optional() }).optional()).handler(async ({ input }) => {
       const profile = agents.botProfile();
       const provider = input?.provider ?? profile.provider;
-      if (provider !== profile.provider) await agents.updateBot({ ...profile, provider, model: provider === "openai-codex" ? "gpt-5.6-sol" : "select-a-model" });
+      if (provider !== profile.provider) await agents.updateBot({ ...profile, provider, model: providers[provider].defaultModel });
       return runtime.startLogin(provider);
     }),
     models: os.handler(() => runtime.listModels(agents.botProfile().provider)),

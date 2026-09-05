@@ -22,6 +22,6 @@ View the desktop at <http://127.0.0.1:6080/vnc/vnc.html>. Browser logins persist
 | POST | `/v1/browser/page/scroll` | Scroll the page |
 | POST | `/v1/browser/page/press_key` | Press a browser key |
 
-Desktop requests follow [desktop-protocol.ts](src/desktop-protocol.ts). Screenshots return PNG bytes; other operations return `{success, data}`. Coordinates use the 1280×1024 screen. Keys use X11 names such as `Return`, `ctrl+l`, and `alt+F2`. `type` inserts literal text. SlopBot's `computer` tool returns screenshots as images to Pi; its `browser` tool retains selector-based page operations.
+Desktop requests follow [computer.ts](../contracts/src/computer.ts). Screenshots return PNG bytes; other operations return `{success, data}`. Coordinates use the 1280×1024 screen. Keys use X11 names such as `Return`, `ctrl+l`, and `alt+F2`. `type` inserts literal text. SlopBot's `computer` tool returns screenshots as images to Pi; its `browser` tool retains selector-based page operations.
 
 `LISTEN_HOST` controls the bind address. If `SANDBOX_API_KEY` is set, `/v1/*` requires the matching `X-AIO-API-Key` header. This does not protect noVNC or raw CDP, which must remain private.

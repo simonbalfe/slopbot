@@ -1,3 +1,4 @@
+import { BrowserArgumentsSchema, ComputerArgumentsSchema, toolParameters } from "@slopbot/contracts/computer";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,17 +8,28 @@ import { os } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { Hono } from "hono";
 import { z } from "zod";
-import { AgentController, PiRuntime, UpdateAgentInputSchema, defaultAgentProfiles } from "slopbot";
+import { AgentController, UpdateAgentInputSchema, defaultAgentProfiles } from "slopbot";
 import { AgentStore } from "../../../packages/core/src/agent-store.ts";
 import { createAgentId } from "../../../packages/core/src/agent-types.ts";
 import { ThreadIdSchema, TurnIdSchema } from "../../../packages/core/src/pi-runtime.ts";
-import type { Skill, ThreadId, ThreadOptions, TurnId } from "../../../packages/core/src/pi-runtime.ts";
+import type { AgentRuntime, CreateSkillInput, Skill, ThreadId, ThreadOptions, TurnId } from "../../../packages/core/src/pi-runtime.ts";
 import { remoteTools } from "../../../packages/core/src/remote-tools.ts";
 import { toolRelay } from "../../../packages/browser-runtime/src/tool-relay.ts";
 import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { nousProvider } from "../../../packages/core/src/nous-provider.ts";
 import { responseMarkdown } from "./terminal.ts";
+
+for (const schema of [BrowserArgumentsSchema, ComputerArgumentsSchema]) {
+  const parameters = toolParameters(schema);
+  assert.equal(parameters["type"], "object");
+  assert.deepEqual(parameters["required"], ["action"]);
+  const properties = z.record(z.string(), z.unknown()).parse(parameters["properties"]);
+  assert.deepEqual(properties["action"], { type: "string", enum: schema.options.map((option) => option.shape.action.value) });
+  for (const option of schema.options) {
+    for (const key of Object.keys(option.shape)) assert.ok(key in properties);
+  }
+}
 
 const markdown = responseMarkdown("## Heading\n\n**bold** and `code`\n\n| Flag | Meaning |\n| --- | --- |\n| --test | Check |\n\n```sh\necho hello\n```\n");
 for (const width of [36, 80]) {
@@ -65,20 +77,25 @@ cancelledNous.abort();
 await assert.rejects(providerNous.oauth.login({ ...callbacksNous, signal: cancelledNous.signal }));
 await assert.rejects(providerNous.oauth.refreshToken({ ...credentialNous, clientId: "different" }, new AbortController().signal), /client ID changed/);
 
-class CheckRuntime extends PiRuntime {
+class CheckRuntime implements AgentRuntime {
+  onToolCall: AgentRuntime["onToolCall"];
+  onText: AgentRuntime["onText"];
+  onTurnComplete: AgentRuntime["onTurnComplete"];
+  async createSkill(_input: CreateSkillInput): Promise<Skill> { throw new Error("Skill creation is not exercised by this fake"); }
+  async threadContainsText(): Promise<boolean> { return false; }
   optionsSeen: ThreadOptions | undefined;
-  override async connect(): Promise<void> {}
-  override close(): void {}
-  override async listSkills(): Promise<readonly Skill[]> { return []; }
-  override async startThread(options: ThreadOptions): Promise<ThreadId> {
+  async connect(): Promise<void> {}
+  close(): void {}
+  async listSkills(): Promise<readonly Skill[]> { return []; }
+  async startThread(options: ThreadOptions): Promise<ThreadId> {
     this.optionsSeen = options;
     return ThreadIdSchema.parse(crypto.randomUUID());
   }
-  override async resumeThread(id: ThreadId, options: ThreadOptions): Promise<ThreadId> {
+  async resumeThread(id: ThreadId, options: ThreadOptions): Promise<ThreadId> {
     this.optionsSeen = options;
     return id;
   }
-  override async startTurn(id: ThreadId): Promise<TurnId> {
+  async startTurn(id: ThreadId): Promise<TurnId> {
     await this.onToolCall?.(id, "browser", { action: "navigate", url: "https://example.com" });
     await assert.rejects(() => this.onToolCall!(id, "computer", { action: "click", x: -1, y: 0 }));
     const screenshot = await this.onToolCall?.(id, "computer", { action: "screenshot" });
@@ -112,7 +129,7 @@ const seed = new AgentStore(databasePath);
 seed.createProfile({ ...defaultAgentProfiles[0], name: "LEAD", instructions: "Own intake, delegation, and synthesis. Send execution to WORKER and report only results the worker actually returns." });
 seed.createProfile({ ...defaultAgentProfiles[0], id: createAgentId("worker") });
 seed.close();
-const runtime = new CheckRuntime({ cwd: directory });
+const runtime = new CheckRuntime();
 const controller = new AgentController(runtime, options);
 let server: ReturnType<typeof Bun.serve> | undefined;
 try {
@@ -169,7 +186,7 @@ try {
   assert.ok(requests.includes("/v1/browser/page/navigate"));
   assert.ok(requests.includes("/v1/desktop"));
   controller.close();
-  const restored = new AgentController(new CheckRuntime({ cwd: directory }), options);
+  const restored = new AgentController(new CheckRuntime(), options);
   try {
     await restored.initialize();
     assert.equal(restored.botProfile().name, "Nova");

@@ -42,3 +42,29 @@ export const RelayResultSchema = z.object({
   ])),
   details: z.unknown().optional(),
 });
+
+export const BrowserArgumentsSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("navigate"), url: z.url() }),
+  z.object({ action: z.literal("snapshot") }),
+  z.object({ action: z.literal("click"), selector: z.string().trim().min(1).max(1_000) }),
+  z.object({
+    action: z.literal("type"),
+    selector: z.string().trim().min(1).max(1_000),
+    text: z.string().trim().min(1).max(8_000),
+  }),
+  z.object({ action: z.literal("evaluate"), expression: z.string().trim().min(1).max(8_000) }),
+]);
+
+export function toolParameters(schema: typeof BrowserArgumentsSchema | typeof ComputerArgumentsSchema): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  for (const option of schema.options) Object.assign(properties, z.toJSONSchema(option).properties);
+  return {
+    type: "object",
+    properties: {
+      ...properties,
+      action: { type: "string", enum: schema.options.map((option) => option.shape.action.value) },
+    },
+    required: ["action"],
+    additionalProperties: false,
+  };
+}

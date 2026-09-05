@@ -1,3 +1,5 @@
+import { ProviderIdSchema } from "@slopbot/contracts/providers";
+import type { ProviderId } from "@slopbot/contracts/providers";
 import { clearScreenDown, createInterface, cursorTo } from "node:readline";
 import { setTimeout } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
@@ -24,7 +26,7 @@ function output(value: string): void {
   process.stdout.write(stripVTControlCharacters(value).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ""));
 }
 
-async function login(provider?: "nous" | "openai-codex"): Promise<void> {
+async function login(provider?: ProviderId): Promise<void> {
   let state = await api.auth.state();
   if (state.status === "authenticated" && !provider) return;
   state = await api.auth.login(provider ? { provider } : undefined);
@@ -84,8 +86,7 @@ async function main(): Promise<void> {
         } else if (text === "/help") output(`${help}\n`);
         else if (text === "/login" || text.startsWith("/login ")) {
           const provider = text.split(/\s+/)[1];
-          if (provider !== undefined && provider !== "nous" && provider !== "openai-codex") throw new Error("Use /login nous or /login openai-codex");
-          await login(provider);
+          await login(provider === undefined ? undefined : ProviderIdSchema.parse(provider));
         } else if (text === "/models") output((await api.auth.models()).map((model) => model.id).join("\n") + "\n");
         else if (text.startsWith("/model ")) {
           const model = text.slice(7).trim();
