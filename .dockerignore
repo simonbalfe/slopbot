@@ -2,3 +2,6 @@
 .slopbot
 dist
 node_modules
+data
+workspace
+.env*

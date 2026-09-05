@@ -18,8 +18,8 @@ import { Type } from "typebox";
 import { z } from "zod";
 
 import { ImageAttachmentSchema } from "./agent-types.ts";
+import type { ImageAttachment } from "./agent-types.ts";
 import { errorMessage, JsonObjectSchema } from "./protocol.ts";
-import type { JsonObject } from "./protocol.ts";
 import { SandboxModeSchema, ThreadIdSchema } from "./runtime-types.ts";
 import type { ThreadId } from "./runtime-types.ts";
 
@@ -76,11 +76,6 @@ export const PiAuthStateSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("error"), message: z.string() }),
 ]);
 
-const ToolResultSchema = z.object({
-  contentItems: z.array(z.object({ text: z.string() })),
-  success: z.boolean(),
-});
-
 export type TurnId = z.infer<typeof TurnIdSchema>;
 export type ApprovalPolicy = z.infer<typeof ApprovalPolicySchema>;
 export type Skill = Readonly<{
@@ -88,8 +83,6 @@ export type Skill = Readonly<{
   description: string;
   content: string;
   path: string;
-  enabled: boolean;
-  cwd: string;
 }>;
 export type TextInput = Readonly<z.infer<typeof TextInputSchema>>;
 export type SkillInput = Readonly<z.infer<typeof SkillInputSchema>>;
@@ -97,10 +90,7 @@ export type ImageInput = Readonly<z.infer<typeof ImageInputSchema>>;
 export type TurnInput = Readonly<z.infer<typeof TurnInputSchema>>;
 export type DynamicTool = Readonly<z.infer<typeof DynamicToolSchema>>;
 export type ThreadOptions = Readonly<z.infer<typeof ThreadOptionsSchema>>;
-export type RuntimeNotification = Readonly<{ method: string; params: unknown }>;
-export type RuntimeRequest = RuntimeNotification;
-export type RuntimeRequestHandler = (request: RuntimeRequest) => Promise<JsonObject>;
-export type RuntimeNotificationHandler = (notification: RuntimeNotification) => void;
+export type TurnStatus = "completed" | "failed";
 export type PiRuntimeOptions = Readonly<z.infer<typeof PiRuntimeOptionsSchema>>;
 export type CreateSkillInput = Readonly<z.infer<typeof CreateSkillInputSchema>>;
 export type PiAuthState = Readonly<z.infer<typeof PiAuthStateSchema>>;
@@ -116,11 +106,12 @@ export class PiRuntime {
   private authController: AbortController | undefined;
   private authLogin: Promise<void> | undefined;
   private authState: PiAuthState = { status: "unauthenticated" };
-  private readonly notifications = new Set<RuntimeNotificationHandler>();
+  onText: ((threadId: ThreadId, delta: string) => void) | undefined;
+  onTurnComplete: ((threadId: ThreadId, status: TurnStatus) => void) | undefined;
+  onToolCall: ((threadId: ThreadId, tool: string, input: unknown) => Promise<string | ImageAttachment>) | undefined;
   private readonly options: PiRuntimeOptions;
   private readonly sessions = new Map<ThreadId, ManagedSession>();
   private modelRuntime: ModelRuntime | undefined;
-  private requestHandler: RuntimeRequestHandler | undefined;
   private skillLoader: ResourceLoader | undefined;
 
   constructor(options: PiRuntimeOptions) {
@@ -187,33 +178,16 @@ export class PiRuntime {
     return this.authState;
   }
 
-  onNotification(handler: RuntimeNotificationHandler): () => void {
-    this.notifications.add(handler);
-    return () => this.notifications.delete(handler);
-  }
-
-  handleRequests(handler: RuntimeRequestHandler): void {
-    this.requestHandler = handler;
-  }
-
-  async listSkills(cwds: readonly string[], forceReload = false): Promise<readonly Skill[]> {
-    const validatedCwds = z.array(z.string().min(1)).min(1).parse(cwds);
-    const skills: Skill[] = [];
-    for (const cwd of validatedCwds) {
-      const loader = cwd === this.options.cwd && this.skillLoader
-        ? this.skillLoader
-        : await this.createResourceLoader(cwd);
-      if (forceReload) await loader.reload();
-      skills.push(...loader.getSkills().skills.map((skill) => ({
-        name: skill.name,
-        description: skill.description,
-        content: readFileSync(skill.filePath, "utf8"),
-        path: skill.filePath,
-        enabled: true,
-        cwd,
-      })));
-    }
-    return skills;
+  async listSkills(): Promise<readonly Skill[]> {
+    const loader = this.skillLoader;
+    if (!loader) throw new Error("Pi runtime is not connected");
+    await loader.reload();
+    return loader.getSkills().skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      content: readFileSync(skill.filePath, "utf8"),
+      path: skill.filePath,
+    }));
   }
 
   async createSkill(input: CreateSkillInput): Promise<Skill> {
@@ -229,7 +203,7 @@ export class PiRuntime {
         `---\nname: ${parsed.name}\ndescription: ${JSON.stringify(parsed.description)}\n---\n\n${parsed.content}\n`,
         { encoding: "utf8", flag: "wx" },
       );
-      const skill = (await this.listSkills([this.options.cwd], true)).find(
+      const skill = (await this.listSkills()).find(
         (item) => item.name === parsed.name,
       );
       if (!skill) throw new Error("Pi did not load the new skill");
@@ -297,7 +271,7 @@ export class PiRuntime {
     }).then(
       () => {
         if (preflightAccepted) {
-          this.notify({ method: "turn/completed", params: { threadId: parsedId, turn: { status: "completed" } } });
+          this.onTurnComplete?.(parsedId, "completed");
         }
       },
       (error: unknown) => {
@@ -306,11 +280,8 @@ export class PiRuntime {
           resolveAccepted(false);
           return;
         }
-        this.notify({
-          method: "item/agentMessage/delta",
-          params: { threadId: parsedId, delta: `Error: ${errorMessage(error)}` },
-        });
-        this.notify({ method: "turn/completed", params: { threadId: parsedId, turn: { status: "failed" } } });
+        this.onText?.(parsedId, `Error: ${errorMessage(error)}`);
+        this.onTurnComplete?.(parsedId, "failed");
       },
     );
     if (!await accepted) {
@@ -326,10 +297,9 @@ export class PiRuntime {
     if (!model) throw new Error("Pi has no OpenAI Codex gpt-5.6-sol model");
     const threadId = ThreadIdSchema.parse(sessionManager.getSessionId());
     const resourceLoader = await this.createResourceLoader(options.cwd, options.developerInstructions);
-    const customTools = (options.dynamicTools ?? []).map((tool) => this.customTool(tool, threadId));
-    const builtInTools = options.sandbox === "read-only"
-      ? ["read", "grep", "find", "ls"]
-      : ["read", "bash", "edit", "write", "grep", "find", "ls"];
+    const customTools = [
+      ...(options.dynamicTools ?? []).map((tool) => this.customTool(tool, threadId)),
+    ];
     const { session } = await createAgentSession({
       cwd: options.cwd,
       model,
@@ -337,10 +307,11 @@ export class PiRuntime {
       resourceLoader,
       sessionManager,
       thinkingLevel: "high",
-      tools: [...builtInTools, ...customTools.map((tool) => tool.name)],
+      tools: [...(options.sandbox === "read-only" ? ["read", "grep", "find", "ls"] : ["read", "bash", "edit", "write", "grep", "find", "ls"]), ...customTools.map((tool) => tool.name)],
       customTools,
     });
     const unsubscribe = session.subscribe((event) => this.handleSessionEvent(threadId, event));
+    this.discardThread(threadId);
     this.sessions.set(threadId, { session, unsubscribe });
     return threadId;
   }
@@ -365,28 +336,17 @@ export class PiRuntime {
       description: tool.description,
       parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
       execute: async (_toolCallId, params) => {
-        if (!this.requestHandler) throw new Error(`No handler registered for ${tool.name}`);
-        const rawResult = await this.requestHandler({
-          method: "item/tool/call",
-          params: { tool: tool.name, threadId, arguments: params },
-        });
-        const result = ToolResultSchema.parse(rawResult);
-        const text = result.contentItems.map((item) => item.text).join("\n");
-        if (!result.success) throw new Error(text);
-        return { content: [{ type: "text", text }], details: {} };
+        if (!this.onToolCall) throw new Error(`No handler registered for ${tool.name}`);
+        const result = await this.onToolCall(threadId, tool.name, params);
+        return typeof result === "string"
+          ? { content: [{ type: "text", text: result }], details: {} }
+          : { content: [{ type: "image", ...ImageAttachmentSchema.parse(result) }], details: {} };
       },
     };
   }
 
   private handleSessionEvent(threadId: ThreadId, event: AgentSessionEvent): void {
     if (event.type !== "message_update" || event.assistantMessageEvent.type !== "text_delta") return;
-    this.notify({
-      method: "item/agentMessage/delta",
-      params: { threadId, delta: event.assistantMessageEvent.delta },
-    });
-  }
-
-  private notify(notification: RuntimeNotification): void {
-    for (const handler of this.notifications) handler(notification);
+    this.onText?.(threadId, event.assistantMessageEvent.delta);
   }
 }

@@ -148,10 +148,24 @@ export class AgentStore {
     this.database.close();
   }
 
+  prepareSingleBot(profile: AgentProfile): void {
+    if (!this.getAgent(profile.id)) this.createProfile(profile);
+    const current = this.getAgent(profile.id);
+    if (current?.profile.instructions === "Own intake, delegation, and synthesis. Send execution to WORKER and report only results the worker actually returns.")
+      this.updateProfile(profile);
+    this.database.query("DELETE FROM desktop_assignments WHERE agent_id != ? OR screen != 0").run(profile.id);
+  }
+
+  updateProfile(profile: AgentProfile): void {
+    const parsed = AgentProfileSchema.parse(profile);
+    this.database.query("UPDATE agents SET name = ?, role = ?, instructions = ?, sandbox = ?, aliases_json = ?, updated_at = ? WHERE id = ?")
+      .run(parsed.name, parsed.role, parsed.instructions, parsed.sandbox, JSON.stringify(parsed.aliases), new Date().toISOString(), parsed.id);
+  }
+
   upsertProfiles(profiles: readonly AgentProfile[]): void {
     for (const profile of profiles) {
       if (!this.isRetired(profile.id) && !this.getAgent(profile.id))
-        this.saveProfile(profile, null);
+        this.insertProfile(profile);
     }
   }
 
@@ -159,7 +173,7 @@ export class AgentStore {
     const validated = AgentProfileSchema.parse(profile);
     if (this.getAgent(validated.id)) throw new Error("Agent ID already exists");
     this.database.query("DELETE FROM retired_agents WHERE id = ?").run(validated.id);
-    this.saveProfile(validated, null);
+    this.insertProfile(validated);
     const stored = this.getAgent(validated.id);
     if (!stored) throw new Error("Agent was not created");
     return stored;
@@ -169,10 +183,10 @@ export class AgentStore {
     return Boolean(
       this.database.query(`
         SELECT 1 FROM message_envelopes
-        WHERE (sender_id = ? OR recipient_id = ?)
+        WHERE recipient_id = ? AND sender_id IS NULL
           AND status IN ('queued', 'processing')
         LIMIT 1
-      `).get(agentId, agentId),
+      `).get(agentId),
     );
   }
 
@@ -318,7 +332,7 @@ export class AgentStore {
         lease_expires_at = ?
       WHERE id = (
         SELECT id FROM message_envelopes
-        WHERE recipient_id = ? AND status = 'queued'
+        WHERE recipient_id = ? AND sender_id IS NULL AND status = 'queued'
         ORDER BY created_at, id LIMIT 1
       )
       RETURNING
@@ -414,22 +428,13 @@ export class AgentStore {
     this.database.query("UPDATE transcript_events SET text = ? WHERE id = ?").run(text, messageId);
   }
 
-  private saveProfile(profile: AgentProfile, threadId: ThreadId | null, threadConfig: string | null = null): void {
+  private insertProfile(profile: AgentProfile): void {
     const validated = AgentProfileSchema.parse(profile);
     const now = new Date().toISOString();
     this.database.query(`
       INSERT INTO agents
-        (id, name, aliases_json, role, sandbox, instructions, thread_id, thread_config, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        aliases_json = excluded.aliases_json,
-        role = excluded.role,
-        sandbox = excluded.sandbox,
-        instructions = excluded.instructions,
-        thread_id = COALESCE(excluded.thread_id, agents.thread_id),
-        thread_config = COALESCE(excluded.thread_config, agents.thread_config),
-        updated_at = excluded.updated_at
+        (id, name, aliases_json, role, sandbox, instructions, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       validated.id,
       validated.name,
@@ -437,8 +442,6 @@ export class AgentStore {
       validated.role,
       validated.sandbox,
       validated.instructions,
-      threadId,
-      threadConfig,
       now,
       now,
     );

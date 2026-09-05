@@ -7,14 +7,23 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "docker compose up -d --build && bun run --filter @slopbot/web dev",
+    "dev": "bun run up && bun run --filter @slopbot/web dev",
     "start": "bun run build:web && bun run start:server",
     "start:server": "bun run --filter @slopbot/server start",
-    "check": "bun run --filter '*' check",
-    "test": "bun test",
+    "check": "bun run --filter '*' check && tsc --noEmit -p vm",
     "build": "bun run build:web",
     "build:web": "bun run --filter @slopbot/web build",
-    "install:leads": "mkdir -p data/bin && docker run --rm -v \"$REPOS_ROOT/projects/clients/david/gmaps-leads-cli/apps/cli:/src:ro\" -v \"$PWD/data/bin:/out\" -w /src golang:1.25 go build -o /out/leads ."
+    "chat": "bun apps/server/src/launch.ts",
+    "up": "bun run runtime:up",
+    "runtime:up": "bun apps/server/src/service.ts up",
+    "runtime:stop": "bun apps/server/src/service.ts stop",
+    "runtime:restart": "bun apps/server/src/service.ts restart",
+    "docker:up": "docker compose up -d --build --remove-orphans --wait",
+    "stop": "bun run runtime:stop && bun run vm:stop",
+    "vm:up": "bun vm/manage.ts up",
+    "vm:shell": "bun vm/manage.ts shell",
+    "vm:stop": "bun vm/manage.ts stop",
+    "chat:attach": "bun apps/server/src/chat.ts"
   },
   "devDependencies": {
     "bun-types": "1.3.5",

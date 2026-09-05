@@ -6,7 +6,7 @@
   --color-panel: #101011;
   --color-raised: #1c1c1e;
   --color-line: #2b2b2e;
-  --color-brand: #ffb247;
+  --color-brand: #c4f526;
   --color-muted-foreground: #a1a1aa;
   --font-sans: "Geist Variable", sans-serif;
 }
@@ -46,6 +46,20 @@
 }
 
 @layer components {
+  .slop-wordmark {
+    font-family: ui-monospace, monospace;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    color: transparent;
+    background: linear-gradient(90deg, #ef40ed 0% 14%, #ffb247 14% 28%, #c4f526 28% 42%, #51d9dc 42% 56%, #b55aea 56% 70%, #f3e351 70% 84%, #ee4997 84%);
+    background-clip: text;
+  }
+
+  input:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 2px solid #ef40ed;
+    outline-offset: 3px;
+  }
+
   .message-markdown {
     @apply min-w-0 break-words leading-6;
   }

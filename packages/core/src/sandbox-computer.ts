@@ -8,8 +8,8 @@ import { SandboxBrowser } from "./sandbox-browser.ts";
 
 export const SandboxComputerOptionsSchema = z
   .object({
-    baseUrls: z.array(z.url()).min(1).max(16),
-    publicUrls: z.array(z.url()).min(1).max(16),
+    baseUrls: z.array(z.url()).length(1),
+    publicUrls: z.array(z.url()).length(1),
     apiKey: z.string().min(1).optional(),
   })
   .refine(({ baseUrls, publicUrls }) => baseUrls.length === publicUrls.length, {

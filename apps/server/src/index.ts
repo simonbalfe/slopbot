@@ -9,7 +9,7 @@ import { z } from "zod";
 import {
   AgentController,
   BrowserInputSchema,
-  CreateAgentInputSchema,
+  UpdateAgentInputSchema,
   CreateSkillInputSchema,
   ImageAttachmentsSchema,
   PiRuntime,
@@ -32,6 +32,7 @@ const AgentBrowserInputSchema = AgentIdSchema.extend({
 });
 
 const config = loadConfig();
+process.env["PI_CODING_AGENT_DIR"] = join(config.dataDirectory, "pi");
 const computer = config.computer
   ? SandboxComputerOptionsSchema.parse({
       baseUrls: config.computer.baseUrls,
@@ -56,13 +57,8 @@ export const appRouter = {
   },
   agents: {
     list: os.handler(() => agents.listAgents()),
-    create: os
-      .input(CreateAgentInputSchema)
-      .handler(({ input }) => agents.createAgent(input)),
-    remove: os.input(AgentIdSchema).handler(async ({ input }) => {
-      await agents.deleteAgent(input.agentId);
-      return { ok: true };
-    }),
+    profile: os.handler(() => agents.botProfile()),
+    update: os.input(UpdateAgentInputSchema).handler(({ input }) => agents.updateBot(input)),
     send: os
       .input(SendMessageSchema)
       .handler(({ input }) =>

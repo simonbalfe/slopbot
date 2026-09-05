@@ -51,23 +51,16 @@ function imageUrl(image: ImageAttachment): string {
   return `data:${image.mimeType};base64,${image.data}`;
 }
 
-const avatarStyle = (id: string): string =>
-  id === "lead"
-    ? "bg-brand text-zinc-900 rounded-[42%_58%_52%_48%] -rotate-6"
-    : id === "worker"
-      ? "bg-emerald-300 text-emerald-950 [clip-path:polygon(50%_0,94%_28%,78%_88%,22%_88%,6%_28%)]"
-      : "bg-blue-300 text-blue-950 rounded-[50%_42%_55%_45%] rotate-30";
-
 function Avatar({
   agent,
   working = false,
 }: Readonly<{ agent: Agent; working?: boolean }>): React.ReactNode {
   return (
-    <span
-      className={`grid size-9 shrink-0 place-items-center text-xs font-black ${avatarStyle(agent.id)} ${working ? "agent-working" : ""}`}
-    >
-      {agent.name[0]}
-    </span>
+    <img
+      src="/assets/slop-creature.png"
+      alt={`${agent.name} mascot`}
+      className={`size-11 shrink-0 rounded-xl object-cover ${working ? "agent-working" : ""}`}
+    />
   );
 }
 
@@ -166,8 +159,9 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
         );
       })}
       {!agent.messages.length && (
-        <div className="grid h-full place-items-center text-sm text-muted-foreground">
-          Start with a task. Your agent will work in its own thread.
+        <div className="grid h-full place-content-center justify-items-center gap-4 text-sm text-muted-foreground">
+          <img src="/assets/slop-creature.png" alt="A wonky lime-green slop creature" className="size-48 rounded-3xl" />
+          <span className="slop-wordmark text-3xl">SLOPBOT</span>
         </div>
       )}
       {agent.status === "running" && (
@@ -303,39 +297,6 @@ function App(): React.ReactNode {
     settings.current?.close();
     await refresh();
   };
-  const createAgent = async (
-    event: React.FormEvent<HTMLFormElement>,
-  ): Promise<void> => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const fields = new FormData(form);
-    setSettingsError("");
-    try {
-      const created = await api.agents.create({
-        id: String(fields.get("id") ?? ""),
-        name: String(fields.get("name") ?? ""),
-        role: String(fields.get("role") ?? ""),
-        instructions: String(fields.get("instructions") ?? ""),
-      });
-      form.reset();
-      setSelectedId(created.id);
-      await refresh();
-    } catch (error) {
-      setSettingsError(errorText(error));
-    }
-  };
-  const deleteAgent = async (target: Agent): Promise<void> => {
-    if (!window.confirm(`Delete ${target.name} and its SlopBot history?`))
-      return;
-    setSettingsError("");
-    try {
-      await api.agents.remove({ agentId: target.id });
-      if (target.id === selectedId) setSelectedId("");
-      await refresh();
-    } catch (error) {
-      setSettingsError(errorText(error));
-    }
-  };
   const createSkill = async (
     event: React.FormEvent<HTMLFormElement>,
   ): Promise<void> => {
@@ -388,8 +349,8 @@ function App(): React.ReactNode {
       <main className="grid h-screen place-items-center bg-app p-6 text-zinc-100">
         <section className="w-full max-w-md rounded-3xl border border-line bg-panel p-8 shadow-2xl">
           <div className="mb-6 flex items-center gap-3 text-xl font-bold">
-            <i className="size-3 rounded-full bg-brand" />
-            SlopBot
+            <img src="/assets/slop-creature.png" alt="" className="size-14 rounded-xl" />
+            <span className="slop-wordmark">SlopBot</span>
           </div>
           <h1 className="text-2xl font-semibold">
             Connect your Codex subscription
@@ -450,9 +411,9 @@ function App(): React.ReactNode {
   return (
     <main className="grid h-screen grid-cols-[240px_minmax(460px,1fr)_330px] overflow-hidden bg-app text-zinc-100">
       <aside className="border-r border-line bg-panel p-3">
-        <div className="flex items-center gap-2 px-2 py-3 text-base font-bold">
-          <i className="size-2 rounded-full bg-brand" />
-          SlopBot
+        <div className="flex flex-col items-center gap-1 px-2 pb-6 pt-3 text-base font-bold">
+          <img src="/assets/slop-creature.png" alt="SlopBot's googly-eyed slime mascot" className="size-32 -rotate-3 rounded-3xl" />
+          <span className="slop-wordmark text-2xl">SLOPBOT</span>
         </div>
         <div className="px-2 pb-2 text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
           AGENTS
@@ -556,14 +517,14 @@ function App(): React.ReactNode {
         className={`flex min-h-0 flex-col border-l border-line bg-panel p-4 ${expanded ? "fixed inset-0 z-10 border-l-0" : ""}`}
       >
         <div className="pb-2 text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
-          LIVE BROWSER
+          LIVE DESKTOP
         </div>
         {agent.desktop ? (
           <img
             ref={viewer}
             className={`w-full rounded-xl border border-line bg-zinc-800 object-contain ${expanded ? "min-h-0 flex-1" : "aspect-video"}`}
             src={screenUrl}
-            alt={`${agent.name} browser`}
+            alt={`${agent.name} desktop`}
             onPointerUp={(event) => {
               const position = point(event);
               if (position)
@@ -587,12 +548,12 @@ function App(): React.ReactNode {
           />
         ) : (
           <div className="grid aspect-video place-items-center rounded-xl border border-line bg-zinc-900 px-6 text-center text-xs text-muted-foreground">
-            No browser slot assigned. This bot can still use Pi, files, shell,
+            No computer assigned. This bot can still use Pi, files, shell,
             messaging, and skills.
           </div>
         )}
         <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
-          <span>{agent.desktop ? `${agent.name} browser` : "No browser"}</span>
+          <span>{agent.desktop ? `${agent.name} desktop` : "No computer"}</span>
           <span className="flex gap-3">
             {agent.desktop?.viewerUrl && (
               <a
@@ -633,64 +594,7 @@ function App(): React.ReactNode {
             {settingsError}
           </p>
         )}
-        <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
-          BOTS ({agents.length})
-        </div>
-        <div className="mt-2 grid gap-2">
-          {agents.map((item) => (
-            <div
-              className="flex items-center justify-between rounded-xl bg-zinc-800 p-3"
-              key={item.id}
-            >
-              <span>
-                <b className="block text-sm">{item.name}</b>
-                <small className="text-muted-foreground">{item.id}</small>
-              </span>
-              <button
-                className="text-xs text-red-300 disabled:opacity-40"
-                disabled={item.status === "running" || agents.length === 1}
-                onClick={() => void deleteAgent(item)}
-              >
-                Delete
-              </button>
-            </div>
-          ))}
-        </div>
-        <details className="mt-2 rounded-xl border border-line p-3">
-          <summary className="cursor-pointer text-sm font-semibold">
-            Add bot
-          </summary>
-          <form className="mt-3 grid gap-2" onSubmit={createAgent}>
-            <input
-              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
-              name="id"
-              placeholder="bot-id"
-              pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-              required
-            />
-            <input
-              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
-              name="name"
-              placeholder="Bot name"
-              required
-            />
-            <input
-              className="rounded-lg border border-line bg-raised px-3 py-2 text-sm"
-              name="role"
-              placeholder="Role"
-              required
-            />
-            <textarea
-              className="min-h-24 rounded-lg border border-line bg-raised px-3 py-2 text-sm"
-              name="instructions"
-              placeholder="Instructions"
-              required
-            />
-            <button className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-zinc-900">
-              Create bot
-            </button>
-          </form>
-        </details>
+        <p className="text-sm">Bot configuration is stored in SQLite. Use <code>bun run chat</code> and <code>/config</code> to inspect or edit it.</p>
         <div className="my-5 border-t border-line" />
         <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
           ENABLED PI SKILLS ({skills.length})

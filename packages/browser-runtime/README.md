@@ -1,39 +1,27 @@
-# Browser runtime
+# Desktop runtime
 
-SlopBot's browser service runs Chromium with a persistent login profile. Agents use its HTTP API to browse, and users can watch or sign in through noVNC.
+The service runs Chromium, Openbox, and shell/file tool implementations inside SlopBot's Linux VM. Pi's model runtime runs separately and calls this service over HTTP. Follow the [local setup](../../README.md#run-locally) and [computer interface](../../docs/computer-api.md).
 
-The root [Compose file](../../compose.yaml) starts two browser slots. Follow the [local setup](../../README.md#run-locally) to run them with the app.
-
-## Local access
-
-| Slot | Browser view | Raw CDP |
-|---|---|---|
-| 1 | <http://127.0.0.1:6080/vnc/vnc.html> | Port `9222` |
-| 2 | <http://127.0.0.1:6081/vnc/vnc.html> | Port `9223` |
-
-Each slot keeps its login profile in a separate Docker volume. Both mount the shared workspace at `/workspace`; downloads go to `/workspace/Downloads`.
+View the desktop at <http://127.0.0.1:6080/vnc/vnc.html>. Browser logins persist in `/data/browser`; downloads go to `/workspace/Downloads`. The service binds to guest localhost and Lima forwards the HTTP viewer and CDP port `9222` to host localhost.
 
 ## API
-
-Routes are relative to the slot's HTTP address, such as `http://127.0.0.1:6080`.
 
 | Method | Route | Purpose |
 |---|---|---|
 | GET | `/health` | Service health |
-| GET | `/v1/browser/info` | Browser readiness, current URL, and CDP address |
-| GET | `/v1/browser/screenshot` | PNG screenshot |
+| GET | `/v1/tools` | Working directory and tool schemas |
+| POST | `/v1/tools` | Execute one shell/file tool on this computer |
+| POST | `/v1/desktop` | Screenshot, click, type, key, or scroll on the full desktop |
+| GET | `/v1/browser/info` | Browser readiness, URL, and CDP address |
+| GET | `/v1/browser/screenshot` | Browser page PNG |
 | POST | `/v1/browser/page/navigate` | Open a URL |
 | GET | `/v1/browser/page/text` | Read visible text |
-| POST | `/v1/browser/page/click` | Click a selector or coordinates |
+| POST | `/v1/browser/page/click` | Click a selector or page coordinates |
 | POST | `/v1/browser/page/fill` | Fill a field |
 | POST | `/v1/browser/page/evaluate` | Run page JavaScript |
 | POST | `/v1/browser/page/scroll` | Scroll the page |
-| POST | `/v1/browser/page/press_key` | Press a key |
+| POST | `/v1/browser/page/press_key` | Press a browser key |
 
-When `SANDBOX_API_KEY` is set, `/v1/*` requests require the matching `X-AIO-API-Key` header. Compose passes this key from `SLOPBOT_SANDBOX_API_KEY`. This does not protect noVNC or raw CDP; keep those ports private.
+Desktop requests follow [desktop-protocol.ts](src/desktop-protocol.ts). Screenshots return PNG bytes; other operations return `{success, data}`. Coordinates use the 1280×1024 screen. Keys use X11 names such as `Return`, `ctrl+l`, and `alt+F2`. `type` inserts literal text. SlopBot's `computer` tool returns screenshots as images to Pi; its `browser` tool retains selector-based page operations.
 
-## Implementation
-
-The service uses TypeScript, Hono, and Playwright Core to control system Chromium over the Chrome DevTools Protocol (CDP). Xvfb, x11vnc, and noVNC provide the interactive view.
-
-Agent Infra Sandbox is a browser API reference. This service implements only the browser operations SlopBot uses. Agent sessions, shell commands, and file tools run in the SlopBot app container.
+`LISTEN_HOST` controls the bind address. If `SANDBOX_API_KEY` is set, `/v1/*` requires the matching `X-AIO-API-Key` header. This does not protect noVNC or raw CDP, which must remain private.

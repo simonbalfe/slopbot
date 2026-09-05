@@ -1,37 +1,14 @@
 # Roadmap
 
-SlopBot is building an open-source take on Grok Bot: agents with private conversations, reliable handoffs, browser access, and shared project work. The Grok Bot agent blueprint is design inspiration, not an upstream specification.
-
-See the [README](../README.md) for what works today and how to run it.
-
-## Next steps
-
-Work in this order:
+Build a small, portable Pi host for one persistent bot. See the [README](../README.md) for the current terminal chat, SQLite configuration, and browser setup.
 
 | Priority | Work | Finished when |
 |---|---|---|
-| 1 | Message recovery | An automated runtime test verifies that queued handoffs survive a restart and completed work is not repeated. SQLite tests already cover correlation, persistence, retries, and duplicate results. |
-| 2 | Scheduling and cancellation | User tasks take priority over internal work. Bots can cancel background work without it silently resuming. |
-| 3 | Scoped memory | Bots can save facts with a source and an owner, then retrieve relevant agent, user, or project memory within a prompt budget. |
-| 4 | Permissions and audit | Users can allow or deny a specific action, approvals expire at the right scope, and decisions appear in an audit log. |
-| 5 | Group rooms | Bots can discuss a task in a shared room without exposing private chats. Rooms stop after 3 rounds, 10 messages, or a round with no useful contribution. |
-| 6 | Agent and browser management | Users can edit and disable bots, browser capacity is visible and queued, and concurrent file edits have ownership or isolation. Creating and deleting bots already works. |
-| 7 | Models and skills | The runtime supports additional providers, usage tracking, cancellation, and skills assigned per bot. Today it uses Pi with OpenAI Codex. |
+| 1 | Stop and steer | User input can interrupt or redirect active work through Pi's native controls. |
+| 2 | Remote context | An authenticated remote provider enriches turns using a stable bot identity; durable knowledge need not live on the device. |
+| 3 | Tool activity and approvals | Users can inspect tool actions and approve consequential operations. |
+| 4 | Routines | The bot can run scheduled work, record outcomes, and pause routines. |
 
-## Rules for new features
+Additional bots, group rooms, multiple computers, model selection, and a plugin marketplace are deferred. One local VM is provisioned now. Keep the existing Pi session and queue mechanisms; do not build parallel execution machinery.
 
-- Protect active user work from internal interruptions.
-- Preserve queued messages and prevent duplicate work during recovery.
-- Keep private chats and memory private unless explicitly shared.
-- Validate actions in the host and record authorization decisions.
-- Make cancellation final unless work is explicitly resumed.
-- Treat browser profiles and filesystem isolation as separate concerns.
-
-These are development requirements. Scheduling, scoped memory, and approval controls are still planned work.
-
-## Open-source release
-
-- Select and add a license.
-- Make the local Leads CLI mounts optional so a fresh clone runs without personal repositories or skills.
-
-Unlimited bot meetings, shared private transcripts, automatic permanent permissions, and dynamic cloud provisioning are outside the current scope.
+Validate external inputs, preserve stored conversations, and make failed context retrieval or memory writes visible. Select a license before publishing an open-source release.

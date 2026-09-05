@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 import { textSchema } from "./protocol.ts";
+import { ComputerArgumentsSchema } from "../../browser-runtime/src/desktop-protocol.ts";
+import type { ComputerArguments } from "../../browser-runtime/src/desktop-protocol.ts";
+import type { ImageAttachment } from "./agent-types.ts";
+
+export { ComputerArgumentsSchema };
 
 const PointSchema = z.number().finite().min(0).max(16_384);
 const ResponseSchema = z.object({
@@ -87,8 +92,10 @@ export class SandboxBrowser {
   }
 
   async screenshot(): Promise<Uint8Array> {
-    const response = await fetch(`${this.endpoint}/v1/browser/screenshot`, {
-      headers: this.headers(),
+    const response = await fetch(`${this.endpoint}/v1/desktop`, {
+      method: "POST",
+      headers: { ...this.headers(), "content-type": "application/json" },
+      body: JSON.stringify({ action: "screenshot" }),
       signal: AbortSignal.timeout(60_000),
     });
     if (!response.ok)
@@ -96,20 +103,32 @@ export class SandboxBrowser {
     return new Uint8Array(await response.arrayBuffer());
   }
 
+  async computer(input: ComputerArguments): Promise<string | ImageAttachment> {
+    const parsed = ComputerArgumentsSchema.parse(input);
+    if (parsed.action === "screenshot") {
+      return { data: Buffer.from(await this.screenshot()).toString("base64"), mimeType: "image/png" };
+    }
+    await this.request("/v1/desktop", parsed);
+    return "Done";
+  }
+
   async input(input: BrowserInput): Promise<void> {
     switch (input.type) {
       case "click":
-        await this.request("/v1/browser/page/click", {
+        await this.computer({
+          action: "click",
           x: input.x,
           y: input.y,
           button: input.button,
-          click_count: input.clickCount,
+          clickCount: input.clickCount,
         });
         return;
       case "scroll": {
         const vertical = Math.abs(input.deltaY) >= Math.abs(input.deltaX);
         const delta = vertical ? input.deltaY : input.deltaX;
-        await this.request("/v1/browser/page/scroll", {
+        if (delta === 0) return;
+        await this.computer({
+          action: "scroll",
           direction: vertical
             ? delta < 0
               ? "up"
@@ -117,12 +136,12 @@ export class SandboxBrowser {
             : delta < 0
               ? "left"
               : "right",
-          amount: Math.abs(delta),
+          amount: Math.min(100, Math.max(1, Math.ceil(Math.abs(delta) / 100))),
         });
         return;
       }
       case "key":
-        await this.request("/v1/browser/page/press_key", { key: input.key });
+        await this.computer({ action: "key", key: input.key.split("+").map((key) => ({ Enter: "Return", Backspace: "BackSpace", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Control: "ctrl", Meta: "super" })[key] ?? key).join("+") });
     }
   }
 

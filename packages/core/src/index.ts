@@ -1,6 +1,6 @@
 export {
   AgentController,
-  CreateAgentInputSchema,
+  UpdateAgentInputSchema,
   defaultAgentProfiles,
 } from "./agent-controller.ts";
 export { createAgentId, ImageAttachmentsSchema } from "./agent-types.ts";

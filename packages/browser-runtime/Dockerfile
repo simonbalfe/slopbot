@@ -1,7 +1,7 @@
 FROM oven/bun:1.3.5-debian
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates chromium fonts-liberation x11vnc xvfb \
+    ca-certificates chromium fonts-liberation openbox xterm scrot xdotool x11vnc xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

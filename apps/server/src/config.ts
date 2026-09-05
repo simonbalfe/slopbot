@@ -2,15 +2,6 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-const UrlListSchema = z
-  .string()
-  .transform((value) =>
-    value
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean),
-  )
-  .pipe(z.array(z.url()).min(1).max(16));
 const OptionalStringSchema = z.preprocess(
   (value) => (value === "" ? undefined : value),
   z.string().min(1).optional(),
@@ -21,9 +12,9 @@ export const SlopBotEnvSchema = z.object({
   SLOPBOT_HOST: z.string().min(1).default("127.0.0.1"),
   SLOPBOT_WORKSPACE: z.string().min(1).optional(),
   SLOPBOT_DATA_DIR: z.string().min(1).optional(),
-  SLOPBOT_SANDBOX_URLS: UrlListSchema.optional(),
-  SLOPBOT_SANDBOX_PUBLIC_URLS: UrlListSchema.optional(),
-  SLOPBOT_SANDBOX_API_KEY: OptionalStringSchema,
+  SLOPBOT_COMPUTER_URL: z.url().optional(),
+  SLOPBOT_COMPUTER_VIEW_URL: z.url().optional(),
+  SLOPBOT_COMPUTER_API_KEY: OptionalStringSchema,
 });
 
 function resolveConfig(
@@ -36,13 +27,12 @@ function resolveConfig(
     port: env.PORT,
     hostname: env.SLOPBOT_HOST,
     workspace,
-    dataDirectory: env.SLOPBOT_DATA_DIR ?? join(workspace, ".slopbot"),
-    computer: env.SLOPBOT_SANDBOX_URLS
+    dataDirectory: env.SLOPBOT_DATA_DIR ?? join(currentDirectory, ".slopbot"),
+    computer: env.SLOPBOT_COMPUTER_URL
       ? {
-          baseUrls: env.SLOPBOT_SANDBOX_URLS,
-          publicUrls:
-            env.SLOPBOT_SANDBOX_PUBLIC_URLS ?? env.SLOPBOT_SANDBOX_URLS,
-          apiKey: env.SLOPBOT_SANDBOX_API_KEY,
+          baseUrls: [env.SLOPBOT_COMPUTER_URL],
+          publicUrls: [env.SLOPBOT_COMPUTER_VIEW_URL ?? env.SLOPBOT_COMPUTER_URL],
+          apiKey: env.SLOPBOT_COMPUTER_API_KEY,
         }
       : undefined,
   };

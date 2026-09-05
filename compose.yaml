@@ -1,82 +1,23 @@
-x-sandbox: &sandbox
-  image: slopbot-browser:local
-  build:
-    context: .
-    dockerfile: packages/browser-runtime/Dockerfile
-  restart: unless-stopped
-  shm_size: 2gb
-  environment: &sandbox-environment
-    SANDBOX_API_KEY: ${SLOPBOT_SANDBOX_API_KEY:-}
-    BROWSER_PROFILE_DIR: /data/browser
-    BROWSER_WORKSPACE: /workspace
 services:
-  sandbox-lead:
-    <<: *sandbox
-    container_name: slopbot-sandbox-lead
-    ports:
-      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:6080:8080
-      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:${SLOPBOT_LEAD_CDP_PORT:-9222}:9322
-    environment:
-      <<: *sandbox-environment
-      BROWSER_CDP_PORT: ${SLOPBOT_LEAD_CDP_PORT:-9222}
-      BROWSER_CDP_PUBLIC_URL: http://127.0.0.1:${SLOPBOT_LEAD_CDP_PORT:-9222}
-    volumes:
-      - ${SLOPBOT_WORKSPACE_PATH:-./workspace}:/workspace
-      - sandbox-lead-profile:/data/browser
-
-  sandbox-worker:
-    <<: *sandbox
-    container_name: slopbot-sandbox-worker
-    ports:
-      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:6081:8080
-      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:${SLOPBOT_WORKER_CDP_PORT:-9223}:9322
-    environment:
-      <<: *sandbox-environment
-      BROWSER_CDP_PORT: ${SLOPBOT_WORKER_CDP_PORT:-9223}
-      BROWSER_CDP_PUBLIC_URL: http://127.0.0.1:${SLOPBOT_WORKER_CDP_PORT:-9223}
-    volumes:
-      - ${SLOPBOT_WORKSPACE_PATH:-./workspace}:/workspace
-      - sandbox-worker-profile:/data/browser
-
   slopbot:
     build: .
     container_name: slopbot
-    depends_on:
-      - sandbox-lead
-      - sandbox-worker
     init: true
     restart: unless-stopped
     environment:
-      PORT: ${PORT:-4317}
+      PORT: 4317
       SLOPBOT_HOST: 0.0.0.0
       SLOPBOT_WORKSPACE: /workspace
       SLOPBOT_DATA_DIR: /data
-      SLOPBOT_SANDBOX_URLS: http://sandbox-lead:8080,http://sandbox-worker:8080
-      SLOPBOT_SANDBOX_PUBLIC_URLS: http://127.0.0.1:6080,http://127.0.0.1:6081
-      SLOPBOT_SANDBOX_API_KEY: ${SLOPBOT_SANDBOX_API_KEY:-}
-      LEADS_API_URL: ${LEADS_API_URL:-}
+      SLOPBOT_COMPUTER_URL: ${SLOPBOT_COMPUTER_URL:-http://host.docker.internal:6080}
+      SLOPBOT_COMPUTER_VIEW_URL: ${SLOPBOT_COMPUTER_VIEW_URL:-http://127.0.0.1:6080}
+      SLOPBOT_COMPUTER_API_KEY: ${SLOPBOT_COMPUTER_API_KEY:-}
     ports:
-      - ${SLOPBOT_BIND_ADDRESS:-127.0.0.1}:${PORT:-4317}:${PORT:-4317}
-    security_opt:
-      - seccomp=unconfined
+      - 127.0.0.1:4317:4317
     volumes:
-      - ./data:/data
-      - ./data/bin/leads:/usr/local/bin/leads:ro
-      - ${CODEX_HOME}/skills/gmaps-leads-cli:/data/pi/skills/gmaps-leads-cli:ro
-      - ${SLOPBOT_WORKSPACE_PATH:-./workspace}:/workspace
+      - ./data/runtime:/data
     healthcheck:
-      test:
-        [
-          "CMD",
-          "curl",
-          "--fail",
-          "--silent",
-          "http://127.0.0.1:${PORT:-4317}/health",
-        ]
-      interval: 10s
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:4317/health]
+      interval: 5s
       timeout: 3s
-      retries: 6
-
-volumes:
-  sandbox-lead-profile:
-  sandbox-worker-profile:
+      retries: 12

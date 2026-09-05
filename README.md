@@ -1,86 +1,90 @@
 # SlopBot
 
-An open-source take on Grok Bot: a local app where AI agents chat with you, delegate work to each other, browse the web, and work on files.
+One persistent Pi bot connected to one Linux computer. By default, SlopBot runs natively on your Mac and connects to a separate Lima VM. Docker is optional. File and shell tools run on the host. Browser and desktop tools target the separate VM through its HTTP interface.
 
-SlopBot is an independent project inspired by the Grok Bot agent blueprint. The current implementation uses OpenAI Codex through Pi; Grok model support is not implemented.
-
-## What it does
-
-- Create and delete bots in Settings, each with its own role and private chat history.
-- Give a bot a task and let it hand work to another bot through persistent messages.
-- Watch an assigned browser live, interact with it, and sign in to websites.
-- Let agents read and edit files or run commands in a shared workspace.
-- Create reusable skills in Settings and attach a skill to a message.
-- Keep agent profiles, chat history, and message delivery state across restarts.
-
-For example, ask one bot to research a task and hand the implementation to another. The bots exchange explicit messages; their private conversations stay separate.
+```text
+Terminal / web UI → SlopBot runtime → computer API → Linux VM
+                         │                                │
+                 identity, history, auth          files, shell, desktop,
+                                                   Chromium profile
+```
 
 ## Run locally
 
-You need Docker with Compose and a ChatGPT account with Codex access.
+On this machine, run `slopbot` from any directory. The installed launcher at `~/.local/bin/slopbot` uses this checkout and starts the native runtime and terminal chat.
 
-The checked-in Compose file includes a local Leads CLI integration. For a standalone setup, remove these two entries from the `slopbot.volumes` list in [compose.yaml](compose.yaml):
-
-```yaml
-- ./data/bin/leads:/usr/local/bin/leads:ro
-- ${CODEX_HOME}/skills/gmaps-leads-cli:/data/pi/skills/gmaps-leads-cli:ro
-```
-
-Then run from the repository root:
+On macOS, install Bun and Lima, then run from this repository:
 
 ```sh
-docker compose up -d --build
+brew install lima
+bun install
+bun run chat
 ```
 
-Open <http://127.0.0.1:4317> and follow the Codex sign-in prompt. Start with the default **lead** and **worker** bots, or create your own in Settings. Use **Open login** to sign in to a bot's assigned browser.
+This starts SlopBot natively and opens terminal chat. Run `bun run vm:up` when you want the separate computer available. On first use, follow the printed Codex login URL and enter its device code. The current model is OpenAI Codex; Grok model support is planned.
 
-Files are shared through `./workspace` by default. To use another folder, set `SLOPBOT_WORKSPACE_PATH` before starting Compose:
+| Command | Action |
+|---|---|
+| `bun run chat` | Start the native runtime and chat |
+| `bun run chat:attach` | Attach without deploying changes |
+| `bun run up` | Start the native runtime |
+| `bun run runtime:up` | Start the native runtime |
+| `bun run runtime:restart` | Restart the native runtime after code changes |
+| `bun run runtime:stop` | Stop the native runtime |
+| `bun run vm:up` | Start/update only the computer VM |
+| `bun run vm:shell` | Enter the VM's terminal at `/workspace` |
+| `bun run vm:stop` | Stop the computer; SlopBot keeps running |
+| `bun run stop` | Stop both; retain their data |
 
-```sh
-export SLOPBOT_WORKSPACE_PATH=/absolute/path/to/your/project
-docker compose up -d --build
-```
+Control the same desktop as the bot at <http://127.0.0.1:6080/vnc/vnc.html>. The optional chat UI is at <http://127.0.0.1:4317>. Right-click the desktop for apps, or run `DISPLAY=:99 xterm &` inside the VM shell.
 
-App data and authentication are stored in `./data`. Browser logins are stored in Docker volumes. See [.env.example](.env.example) for configuration names.
+Chat commands: `/clear`, `/config`, `/name TEXT`, `/role TEXT`, `/instructions TEXT`, `/computer` (also `/browser`), `/login`, and `/quit`. `/clear` clears the display without deleting history. Disconnecting leaves the services running.
 
-### Optional Leads CLI
+The terminal interface provides a shaded composer, formatted Markdown responses, input history, and Shift+Enter for multiline messages. Headings, emphasis, code blocks, lists, links, and tables render inline as responses arrive. Startup output stays hidden; failures show the path to a diagnostic log.
 
-To keep the Leads integration, set `CODEX_HOME` to your Codex directory containing `skills/gmaps-leads-cli`, and `REPOS_ROOT` to the repository root containing `projects/clients/david/gmaps-leads-cli`. With Bun installed, run `bun run install:leads` before starting Compose. Set `LEADS_API_URL` to your Leads API server; provider credentials stay on that server.
+## One computer connection
 
-## How it works
+Pi does not require Docker or Lima. Any machine running SlopBot can connect to the computer's HTTP API. Configure `SLOPBOT_COMPUTER_URL` for remote browser and desktop access. `SLOPBOT_WORKSPACE` is the local host directory for file and shell tools; the macOS service defaults to `~/workspace`. The native runtime uses `http://127.0.0.1:6080`. macOS launchd keeps it running after you disconnect the terminal.
 
-The React web app talks to a Hono server through a typed oRPC API. Pi runs each bot as a separate session in one app process. SQLite stores profiles, visible transcripts, and queued messages; Pi persists its own sessions.
+See the [computer interface](docs/computer-api.md) for configuration, request/response contracts, error behavior, and connecting another harness. Local file and shell tools work independently of VM availability. Remote browser and desktop operations fail explicitly if the VM is unreachable.
 
-Compose starts the app and two browser containers. Browser slots are assigned when available, independently of the number of bots. Each slot has its own persistent login profile. All bots share the workspace and app container.
+## Files and persistence
 
-This is an early local prototype. Tool actions currently run without an approval prompt. Keep the app, browser views, and raw browser-control ports private. Scoped memory, approval controls, cancellation, group rooms, and additional model providers are planned in the [roadmap](docs/roadmap.md).
+The VM has 2 CPUs, 3 GiB RAM, and a 20 GiB sparse disk under `~/.lima/slopbot`. It mounts `~/workspace` read/write at `/workspace`. To choose a different host folder, set `SLOPBOT_WORKSPACE_PATH` in the ignored project `.env` before creating the VM. Existing mounts can be changed with `limactl edit slopbot` while stopped.
+
+| Location | Contents |
+|---|---|
+| Host `data/runtime/slopbot.sqlite` | Bot configuration and messages, stable bot ID `lead` |
+| Host `data/runtime/pi` | Model authentication and Pi session history |
+| VM `/data/browser` | Chromium profile and saved website logins |
+| VM `/home/slopbot` | Persistent Linux home |
+| VM `/workspace` | Shared work files; downloads go to `Downloads` |
+
+SlopBot owns one state directory, `data/runtime`, configured through `SLOPBOT_DATA_DIR`. The engine-specific subdirectory is derived internally. The VM receives application source through a filtered deployment archive, not a repository mount. It does not need access to the runtime's credentials or database. Stopping or updating either component preserves its data.
+
+Bot state was migrated out of the former VM-hosted runtime. The earlier Docker data and browser volumes remain as backups and are not used by this setup. Pi's detailed session format is still Pi-specific; full harness-independent bot-state storage is planned separately.
 
 ## Development
 
-Install Bun, complete the Compose setup above, then run:
-
 ```sh
-bun install
 bun run dev
-```
-
-The UI runs at <http://127.0.0.1:5175> and proxies requests to the Docker app at port `4317`.
-
-```sh
 bun run check
-bun test
 bun run build
+bun apps/server/src/verify.ts
 ```
 
-`bun start` builds and runs the app directly on the host. It does not start browser containers; agents use the host filesystem and available shell tools.
+The standalone verification uses temporary data and a simulated model response. It checks the tool relay, argument validation, disconnection behavior, bot configuration, session continuity, and terminal chat.
+
+`bun run start:server` runs SlopBot in the foreground on any supported Bun host. Set `SLOPBOT_DATA_DIR` to a writable local directory, `SLOPBOT_WORKSPACE` to a local host working directory, and `SLOPBOT_COMPUTER_URL` to its API.
+
+Docker remains optional via `bun run docker:up`. Stop the native runtime first and use `SLOPBOT_COMPUTER_URL=http://host.docker.internal:6080` for Docker on this Mac. Both variants use the same state; never run them concurrently against it.
 
 | Directory | Purpose |
 |---|---|
-| [apps/web](apps/web) | Chat, settings, and browser preview |
-| [apps/server](apps/server) | API, configuration, and web app serving |
-| [packages/core](packages/core) | Agent sessions, messaging, persistence, and tools |
-| [packages/browser-runtime](packages/browser-runtime/README.md) | Chromium service and browser API |
+| [apps/web](apps/web) | Optional chat and desktop preview |
+| [apps/server](apps/server) | API host and terminal client |
+| [packages/core](packages/core) | Bot configuration, queue, Pi sessions, host tools, remote computer access |
+| [packages/browser-runtime](packages/browser-runtime/README.md) | Computer executor, desktop, Chromium |
+| [vm](vm) | Local computer provisioning and lifecycle |
 
-## License
-
-An open-source license still needs to be selected and added to this repository.
+See the [roadmap](docs/roadmap.md) for planned work. An open-source license still needs to be selected.
