@@ -8,7 +8,13 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function Settings({ agent, settings, refresh }: Readonly<{ agent: Agent; settings: React.RefObject<HTMLDialogElement | null>; refresh: () => Promise<void> }>): React.ReactNode {
+export function Settings({ agent, agents, settings, refresh, select }: Readonly<{
+  agent: Agent;
+  agents: readonly Agent[];
+  settings: React.RefObject<HTMLDialogElement | null>;
+  refresh: () => Promise<void>;
+  select: (agentId: string) => void;
+}>): React.ReactNode {
   const [skills, setSkills] = useState<readonly Skill[]>([]);
   const [settingsError, setSettingsError] = useState("");
   const refreshSkills = async (): Promise<void> => { setSkills(await api.skills.list()); };
@@ -22,6 +28,38 @@ export function Settings({ agent, settings, refresh }: Readonly<{ agent: Agent; 
     await api.agents.clear({ agentId: agent.id });
     settings.current?.close();
     await refresh();
+  };
+  const createAgent = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ): Promise<void> => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fields = new FormData(form);
+    setSettingsError("");
+    try {
+      const created = await api.agents.create({
+        id: String(fields.get("id") ?? ""),
+        name: String(fields.get("name") ?? ""),
+        role: String(fields.get("role") ?? ""),
+        instructions: String(fields.get("instructions") ?? ""),
+      });
+      form.reset();
+      select(created.id);
+      await refresh();
+    } catch (error) {
+      setSettingsError(errorText(error));
+    }
+  };
+  const deleteAgent = async (target: Agent): Promise<void> => {
+    if (!window.confirm(`Delete ${target.name} and its SlopBot history?`)) return;
+    setSettingsError("");
+    try {
+      await api.agents.remove({ agentId: target.id });
+      if (target.id === agent.id) select("");
+      await refresh();
+    } catch (error) {
+      setSettingsError(errorText(error));
+    }
   };
   const createSkill = async (
     event: React.FormEvent<HTMLFormElement>,
@@ -61,7 +99,36 @@ export function Settings({ agent, settings, refresh }: Readonly<{ agent: Agent; 
           {settingsError}
         </p>
       )}
-      <p className="text-sm">Bot configuration is stored in SQLite. Use <code>bun run chat</code> and <code>/config</code> to inspect or edit it.</p>
+      <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
+        BOTS ({agents.length})
+      </div>
+      <div className="mt-2 grid gap-2">
+        {agents.map((item) => (
+          <div className="flex items-center justify-between rounded-xl bg-zinc-800 p-3" key={item.id}>
+            <span>
+              <b className="block text-sm">{item.name}</b>
+              <small className="text-muted-foreground">{item.id} · {item.role}</small>
+            </span>
+            <button
+              className="text-xs text-red-300 disabled:opacity-40"
+              disabled={item.id === "lead" || item.status === "running" || agents.length === 1}
+              onClick={() => void deleteAgent(item)}
+            >
+              Delete
+            </button>
+          </div>
+        ))}
+      </div>
+      <details className="mt-2 rounded-xl border border-line p-3">
+        <summary className="cursor-pointer text-sm font-semibold">Add bot</summary>
+        <form className="mt-3 grid gap-2" onSubmit={createAgent}>
+          <input className="rounded-lg border border-line bg-raised px-3 py-2 text-sm" name="id" placeholder="bot-id" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required />
+          <input className="rounded-lg border border-line bg-raised px-3 py-2 text-sm" name="name" placeholder="Bot name" required />
+          <input className="rounded-lg border border-line bg-raised px-3 py-2 text-sm" name="role" placeholder="Role" required />
+          <textarea className="min-h-24 rounded-lg border border-line bg-raised px-3 py-2 text-sm" name="instructions" placeholder="Instructions" required />
+          <button className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-zinc-900">Create bot</button>
+        </form>
+      </details>
       <div className="my-5 border-t border-line" />
       <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
         ENABLED PI SKILLS ({skills.length})

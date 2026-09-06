@@ -423,7 +423,13 @@ function App(): React.ReactNode {
         </form>
       </section>
       <Desktop agent={agent} />
-      <Settings agent={agent} settings={settings} refresh={refresh} />
+      <Settings
+        agent={agent}
+        agents={agents}
+        settings={settings}
+        refresh={refresh}
+        select={setSelectedId}
+      />
     </main>
   );
 }

@@ -1,5 +1,6 @@
 export {
   AgentController,
+  CreateAgentInputSchema,
   UpdateAgentInputSchema,
   defaultAgentProfiles,
 } from "./agent-controller.ts";

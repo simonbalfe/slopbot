@@ -1,14 +1,29 @@
-# Roadmap
+# SlopBot roadmap
 
-Build a small, portable Pi host for one persistent bot. See the [README](../README.md) for the current terminal chat, SQLite configuration, and browser setup.
+SlopBot should remain a small multi-bot app: persistent bots, private conversations, durable handoffs, and one computer they can use.
 
-| Priority | Work | Finished when |
-|---|---|---|
-| 1 | Stop and steer | User input can interrupt or redirect active work through Pi's native controls. |
-| 2 | Remote context | An authenticated remote provider enriches turns using a stable bot identity; durable knowledge need not live on the device. |
-| 3 | Tool activity and approvals | Users can inspect tool actions and approve consequential operations. |
-| 4 | Routines | The bot can run scheduled work, record outcomes, and pause routines. |
+## Working now
 
-Additional bots, group rooms, multiple computers, model selection, and a plugin marketplace are deferred. The installer provisions one local Lima VM by default, and the `slopbot computer` commands manage its lifecycle. Keep the existing Pi session and queue mechanisms; do not build parallel execution machinery.
+- Multiple bots with stable identities and separate Pi sessions.
+- A default `lead` and `worker`, plus user-created bots.
+- Durable asynchronous bot-to-bot requests and correlated results.
+- Private transcripts with visible message delivery state.
+- Retry and restart recovery for interrupted messages.
+- One shared Linux computer with a persistent browser and desktop.
 
-Validate external inputs, preserve stored conversations, and make failed context retrieval or memory writes visible. Select a license before publishing an open-source release.
+## Next
+
+1. Let users stop or redirect active work.
+2. Add clear approval prompts for consequential actions.
+3. Add small, scoped memories without merging private conversations.
+4. Add routines for scheduled work.
+5. Give each bot its own browser profile and session inside the same shared VM.
+
+## Invariants
+
+- A user message takes priority over internal work.
+- A queued message survives restart and wakes its recipient no more than once.
+- Every bot keeps its own private transcript.
+- Bots communicate through explicit messages, never invisible shared context.
+- The host validates state changes and external actions.
+- The interface should stay understandable without exposing runtime internals.

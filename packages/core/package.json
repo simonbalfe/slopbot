@@ -7,7 +7,7 @@
     "./protocol": "./src/protocol.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit && bun test src/agent-store.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.85.0",

@@ -352,6 +352,6 @@ export class PiRuntime {
 }
 
 export type AgentRuntime = Pick<PiRuntime,
-  "connect" | "close" | "listSkills" | "createSkill" | "startThread" | "resumeThread" |
+  "connect" | "close" | "listSkills" | "createSkill" | "discardThread" | "startThread" | "resumeThread" |
   "threadContainsText" | "startTurn" | "onToolCall" | "onText" | "onTurnComplete"
 >;

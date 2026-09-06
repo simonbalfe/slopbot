@@ -1,108 +1,56 @@
 # SlopBot
 
-One persistent Pi bot connected to one Linux computer. By default, SlopBot runs natively on your Mac and connects to a separate Lima VM. Docker is optional. File and shell tools run on the host. Browser and desktop tools target the separate VM through its HTTP interface.
+SlopBot is a small app for running persistent AI bots that can use a computer and talk to each other.
 
-```text
-Terminal / web UI → SlopBot runtime → computer API → Linux VM
-                         │                                │
-                 identity, history, auth          files, shell, desktop,
-                                                   Chromium profile
+Each bot has its own identity, instructions, private conversation, and Pi session. Bots coordinate through durable messages instead of sharing hidden context. The default team has a `lead` bot that coordinates work and a `worker` bot that executes it; more bots can be added from the UI.
+
+```mermaid
+flowchart LR
+  User --> SlopBot
+  SlopBot --> Lead["LEAD<br/>private Pi session"]
+  SlopBot --> Worker["WORKER<br/>private Pi session"]
+  Lead <--> Mailroom[(durable messages)]
+  Worker <--> Mailroom
+  Lead --> Computer["shared Lima VM<br/>Chromium + desktop"]
+  Worker --> Computer
 ```
 
-## Run locally
+## Principles
 
-Install on macOS from a checkout:
+- Keep bots persistent: identities, conversations, and messages survive restarts.
+- Keep conversations private: bots share only deliberate handoffs.
+- Keep coordination visible: bot-to-bot requests and results appear in each bot's chat.
+- Keep the computer separate: model credentials and SlopBot state stay outside the Linux computer.
+- Keep the product small: bots, messages, one computer, and a clear interface.
 
-```sh
-sh install.sh
-slopbot
-```
+## Install
 
-Or download the installer:
+On macOS:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/simonbalfe/slopbot/main/install.sh | sh
+slopbot
 ```
 
-The one-shot installer installs Bun if needed, clones and builds SlopBot, creates `~/.local/bin/slopbot`, installs Lima through Homebrew when needed, and provisions the computer VM. Git and Homebrew are required. Remote installation defaults to `~/.local/share/slopbot`; override it with `SLOPBOT_INSTALL_DIR`, the command directory with `SLOPBOT_BIN_DIR`, or persistent state with `SLOPBOT_DATA_DIR`. Existing destination directories are never overwritten. Set `SLOPBOT_SKIP_COMPUTER=1` to install only the runtime when connecting to a remote computer.
+The installer builds SlopBot and prepares its Linux computer. Git and Homebrew are required. Existing installation directories are never overwritten.
 
-Run `slopbot uninstall` to remove the service, command, and installer-managed application files while preserving state and the computer. Run `slopbot uninstall --purge` to remove state and the Lima computer too. A source checkout is never deleted.
+Open the web interface at <http://127.0.0.1:4317>. The first run asks you to connect a ChatGPT Plus or Pro account.
 
-This starts SlopBot natively and opens terminal chat. The separate computer is ready after installation. On first use, follow the printed Codex login URL and enter its device code. The current model is OpenAI Codex; Grok model support is planned.
+## How the computer works
 
-| Command | Action |
-|---|---|
-| `bun run chat` | Start the native runtime and chat |
-| `bun run chat:attach` | Attach without deploying changes |
-| `bun run up` | Start the native runtime |
-| `bun run runtime:up` | Start the native runtime |
-| `bun run runtime:restart` | Restart the native runtime after code changes |
-| `bun run runtime:stop` | Stop the native runtime |
-| `bun run vm:up` | Start/update only the computer VM |
-| `bun run vm:shell` | Enter the VM's terminal at `/workspace` |
-| `bun run vm:stop` | Stop the computer; SlopBot keeps running |
-| `bun run stop` | Stop both; retain their data |
+SlopBot itself runs as a normal macOS process. Lima manages a lightweight Debian virtual machine containing Chromium and a desktop. Lima is a VM manager, not a container. The bots use that VM as their computer, and you can view the same desktop at <http://127.0.0.1:6080/vnc/vnc.html>.
 
-The installed CLI manages the computer without requiring commands from the source directory:
+The VM mounts `~/workspace` at `/workspace`. Bot configuration, messages, model authentication, and Pi sessions remain on the Mac. Browser logins remain inside the VM.
 
-| Command | Action |
-|---|---|
-| `slopbot computer setup` | Install Lima when needed, then create or update the computer |
-| `slopbot computer start` | Start and update an existing computer |
-| `slopbot computer status` | Show the Lima computer status |
-| `slopbot computer open` | Open the computer desktop |
-| `slopbot computer shell` | Enter the computer shell at `/workspace` |
-| `slopbot computer stop` | Stop the computer while retaining its data |
-
-Control the same desktop as the bot at <http://127.0.0.1:6080/vnc/vnc.html>. The optional chat UI is at <http://127.0.0.1:4317>. Right-click the desktop for apps, or run `DISPLAY=:99 xterm &` inside the VM shell.
-
-Chat commands: `/clear`, `/config`, `/name TEXT`, `/role TEXT`, `/instructions TEXT`, `/computer` (also `/browser`), `/login`, and `/quit`. `/clear` clears the display without deleting history. Disconnecting leaves the services running.
-
-The terminal interface provides a shaded composer, formatted Markdown responses, input history, and Shift+Enter for multiline messages. Headings, emphasis, code blocks, lists, links, and tables render inline as responses arrive. Startup output stays hidden; failures show the path to a diagnostic log.
-
-## One computer connection
-
-Pi does not require Docker or Lima. Any machine running SlopBot can connect to the computer's HTTP API. Configure `SLOPBOT_COMPUTER_URL` for remote browser and desktop access. `SLOPBOT_WORKSPACE` is the local host directory for file and shell tools; the macOS service defaults to `~/workspace`. The native runtime uses `http://127.0.0.1:6080`. macOS launchd keeps it running after you disconnect the terminal.
-
-See the [computer interface](docs/computer-api.md) for configuration, request/response contracts, error behavior, and connecting another harness. Local file and shell tools work independently of VM availability. Remote browser and desktop operations fail explicitly if the VM is unreachable.
-
-## Files and persistence
-
-The installer pulls a Debian 13 base image and creates a VM with 2 CPUs, 3 GiB RAM, and a 20 GiB sparse disk under `~/.lima/slopbot`. It mounts `~/workspace` read/write at `/workspace`. To choose a different host folder, set `SLOPBOT_WORKSPACE_PATH` before installation or before running `slopbot computer setup`. Existing mounts can be changed with `limactl edit slopbot` while stopped.
-
-| Location | Contents |
-|---|---|
-| Host `~/.local/share/slopbot-data/slopbot.sqlite` | Installed bot configuration and messages, stable bot ID `lead` |
-| Host `~/.local/share/slopbot-data/pi` | Model authentication and Pi session history |
-| VM `/data/browser` | Chromium profile and saved website logins |
-| VM `/home/slopbot` | Persistent Linux home |
-| VM `/workspace` | Shared work files; downloads go to `Downloads` |
-
-SlopBot owns one state directory, `data/runtime`, configured through `SLOPBOT_DATA_DIR`. The engine-specific subdirectory is derived internally. The VM receives application source through a filtered deployment archive, not a repository mount. It does not need access to the runtime's credentials or database. Stopping or updating either component preserves its data.
-
-Pi's detailed session format is still Pi-specific; full harness-independent bot-state storage is planned separately.
+Docker is optional and only packages the SlopBot runtime; it does not replace the default Lima computer.
 
 ## Development
 
 ```sh
+bun install
 bun run dev
 bun run check
-bun run build
 bun apps/server/src/verify.ts
 ```
 
-The standalone verification uses temporary data and a simulated model response. It checks the tool relay, argument validation, disconnection behavior, bot configuration, session continuity, and terminal chat.
-
-`bun run start:server` runs SlopBot in the foreground on any supported Bun host. Set `SLOPBOT_DATA_DIR` to a writable local directory, `SLOPBOT_WORKSPACE` to a local host working directory, and `SLOPBOT_COMPUTER_URL` to its API.
-
-Docker remains optional via `bun run docker:up`. Stop the native runtime first and use `SLOPBOT_COMPUTER_URL=http://host.docker.internal:6080` for Docker on macOS. Both variants use the same state; never run them concurrently against it.
-
-| Directory | Purpose |
-|---|---|
-| [apps/web](apps/web) | Optional chat and desktop preview |
-| [apps/server](apps/server) | API host and terminal client |
-| [packages/core](packages/core) | Bot configuration, queue, Pi sessions, host tools, remote computer access |
-| [packages/browser-runtime](packages/browser-runtime/README.md) | Computer executor, desktop, Chromium |
-| [vm](vm) | Local computer provisioning and lifecycle |
-
-See the [roadmap](docs/roadmap.md) for planned work. An open-source license still needs to be selected.
+See [the computer interface](docs/computer-api.md) for integration details and [the roadmap](docs/roadmap.md) for planned work.

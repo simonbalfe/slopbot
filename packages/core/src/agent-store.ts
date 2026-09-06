@@ -146,12 +146,11 @@ export class AgentStore {
     this.database.close();
   }
 
-  prepareSingleBot(profile: AgentProfile): void {
-    if (!this.getAgent(profile.id)) this.createProfile(profile);
-    const current = this.getAgent(profile.id);
-    if (current?.profile.instructions === "Own intake, delegation, and synthesis. Send execution to WORKER and report only results the worker actually returns.")
-      this.updateProfile(profile);
-    this.database.query("DELETE FROM desktop_assignments WHERE agent_id != ? OR screen != 0").run(profile.id);
+  upsertProfiles(profiles: readonly AgentProfile[]): void {
+    for (const profile of profiles) {
+      if (!this.isRetired(profile.id) && !this.getAgent(profile.id))
+        this.insertProfile(profile);
+    }
   }
 
   updateProfile(profile: AgentProfile): void {
@@ -170,14 +169,37 @@ export class AgentStore {
     return stored;
   }
 
+  deleteAgent(agentId: AgentId, retire = true): void {
+    const remove = this.database.transaction(() => {
+      if (retire)
+        this.database.query(`
+          INSERT INTO retired_agents (id, retired_at) VALUES (?, ?)
+          ON CONFLICT(id) DO UPDATE SET retired_at = excluded.retired_at
+        `).run(agentId, new Date().toISOString());
+      this.database.query(`
+        DELETE FROM transcript_events
+        WHERE agent_id = ? OR message_id IN (
+          SELECT id FROM message_envelopes
+          WHERE sender_id = ? OR recipient_id = ?
+        )
+      `).run(agentId, agentId, agentId);
+      this.database.query(
+        "DELETE FROM message_envelopes WHERE sender_id = ? OR recipient_id = ?",
+      ).run(agentId, agentId);
+      this.database.query("DELETE FROM desktop_assignments WHERE agent_id = ?").run(agentId);
+      this.database.query("DELETE FROM agents WHERE id = ?").run(agentId);
+    });
+    remove();
+  }
+
   hasPendingMessages(agentId: AgentId): boolean {
     return Boolean(
       this.database.query(`
         SELECT 1 FROM message_envelopes
-        WHERE recipient_id = ? AND sender_id IS NULL
+        WHERE (sender_id = ? OR recipient_id = ?)
           AND status IN ('queued', 'processing')
         LIMIT 1
-      `).get(agentId),
+      `).get(agentId, agentId),
     );
   }
 
@@ -206,7 +228,10 @@ export class AgentStore {
   assignDesktop(agentId: AgentId, screenCount: number): number | undefined {
     const existing = this.database.query("SELECT screen FROM desktop_assignments WHERE agent_id = ?").get(agentId);
     const existingScreen = z.object({ screen: z.number().int().nonnegative() }).safeParse(existing);
-    if (existingScreen.success) return this.desktopScreen(existingScreen.data.screen, screenCount);
+    if (existingScreen.success && existingScreen.data.screen < screenCount)
+      return existingScreen.data.screen;
+    if (existingScreen.success)
+      this.database.query("DELETE FROM desktop_assignments WHERE agent_id = ?").run(agentId);
 
     const usedScreens = new Set(this.database.query("SELECT screen FROM desktop_assignments").all()
       .map((row) => z.object({ screen: z.number().int().nonnegative() }).parse(row).screen));
@@ -279,6 +304,14 @@ export class AgentStore {
     return false;
   }
 
+  hasReply(messageId: string): boolean {
+    return Boolean(
+      this.database
+        .query("SELECT 1 FROM message_envelopes WHERE parent_id = ? LIMIT 1")
+        .get(messageId),
+    );
+  }
+
   claimNextMessage(agentId: AgentId): MessageEnvelope | undefined {
     const leaseExpiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
     const row = this.database.query(`
@@ -287,7 +320,7 @@ export class AgentStore {
         lease_expires_at = ?
       WHERE id = (
         SELECT id FROM message_envelopes
-        WHERE recipient_id = ? AND sender_id IS NULL AND status = 'queued'
+        WHERE recipient_id = ? AND status = 'queued'
         ORDER BY created_at, id LIMIT 1
       )
       RETURNING
@@ -402,17 +435,18 @@ export class AgentStore {
     );
   }
 
-  private desktopScreen(screen: number, screenCount: number): number {
-    if (screen >= screenCount) throw new Error(`X11 screen ${screen} exceeds configured capacity ${screenCount}`);
-    return screen;
-  }
-
   private parseAgent(value: unknown): StoredAgent {
     const row = StoredAgentRowSchema.parse(value);
     return {
       profile: AgentProfileSchema.parse({ ...row, aliases: z.array(z.string()).parse(JSON.parse(row.aliasesJson)) }),
       threadId: row.threadId,
     };
+  }
+
+  private isRetired(agentId: AgentId): boolean {
+    return Boolean(
+      this.database.query("SELECT 1 FROM retired_agents WHERE id = ?").get(agentId),
+    );
   }
 
   private insertMessageEvent(agentId: AgentId, message: MessageEnvelope, direction: "inbound" | "outbound"): void {

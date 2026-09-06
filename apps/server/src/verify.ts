@@ -12,7 +12,7 @@ import { AgentController, UpdateAgentInputSchema, defaultAgentProfiles } from "s
 import { AgentStore } from "../../../packages/core/src/agent-store.ts";
 import { createAgentId } from "../../../packages/core/src/agent-types.ts";
 import { ThreadIdSchema, TurnIdSchema } from "../../../packages/core/src/pi-runtime.ts";
-import type { AgentRuntime, CreateSkillInput, Skill, ThreadId, ThreadOptions, TurnId } from "../../../packages/core/src/pi-runtime.ts";
+import type { AgentRuntime, CreateSkillInput, Skill, ThreadId, ThreadOptions, TurnId, TurnInput } from "../../../packages/core/src/pi-runtime.ts";
 import { remoteTools } from "../../../packages/core/src/remote-tools.ts";
 import { toolRelay } from "../../../packages/browser-runtime/src/tool-relay.ts";
 import { stripVTControlCharacters } from "node:util";
@@ -49,28 +49,38 @@ class CheckRuntime implements AgentRuntime {
   onText: AgentRuntime["onText"];
   onTurnComplete: AgentRuntime["onTurnComplete"];
   async createSkill(_input: CreateSkillInput): Promise<Skill> { throw new Error("Skill creation is not exercised by this fake"); }
+  discardThread(id: ThreadId): void { this.optionsByThread.delete(id); }
   async threadContainsText(): Promise<boolean> { return false; }
-  optionsSeen: ThreadOptions | undefined;
+  readonly optionsByThread = new Map<ThreadId, ThreadOptions>();
   async connect(): Promise<void> {}
   close(): void {}
   async listSkills(): Promise<readonly Skill[]> { return []; }
   async startThread(options: ThreadOptions): Promise<ThreadId> {
-    this.optionsSeen = options;
-    return ThreadIdSchema.parse(crypto.randomUUID());
-  }
-  async resumeThread(id: ThreadId, options: ThreadOptions): Promise<ThreadId> {
-    this.optionsSeen = options;
+    const id = ThreadIdSchema.parse(crypto.randomUUID());
+    this.optionsByThread.set(id, options);
     return id;
   }
-  async startTurn(id: ThreadId): Promise<TurnId> {
-    await this.onToolCall?.(id, "browser", { action: "navigate", url: "https://example.com" });
-    await assert.rejects(() => this.onToolCall!(id, "computer", { action: "click", x: -1, y: 0 }));
-    const screenshot = await this.onToolCall?.(id, "computer", { action: "screenshot" });
-    assert.equal(typeof screenshot, "object");
-    assert.ok(screenshot && typeof screenshot !== "string" && screenshot.mimeType === "image/png");
-    await this.onToolCall?.(id, "computer", { action: "key", key: "alt+F2" });
+  async resumeThread(id: ThreadId, options: ThreadOptions): Promise<ThreadId> {
+    this.optionsByThread.set(id, options);
+    return id;
+  }
+  async startTurn(id: ThreadId, input: readonly TurnInput[]): Promise<TurnId> {
+    const text = input.find((item) => item.type === "text")?.text ?? "";
+    const tools = this.optionsByThread.get(id)?.dynamicTools?.map((tool) => tool.name) ?? [];
+    if (tools.includes("browser")) {
+      await this.onToolCall?.(id, "browser", { action: "navigate", url: "https://example.com" });
+      await assert.rejects(() => this.onToolCall!(id, "computer", { action: "click", x: -1, y: 0 }));
+      const screenshot = await this.onToolCall?.(id, "computer", { action: "screenshot" });
+      assert.equal(typeof screenshot, "object");
+      assert.ok(screenshot && typeof screenshot !== "string" && screenshot.mimeType === "image/png");
+      await this.onToolCall?.(id, "computer", { action: "key", key: "alt+F2" });
+    }
+    if (text.includes("delegate verification"))
+      await this.onToolCall?.(id, "send_to_agent", { target: "worker", message: "Verify the durable handoff" });
+    if (text.includes("SlopBot request"))
+      await this.onToolCall?.(id, "send_to_agent", { target: "lead", message: "Worker verified the handoff" });
     setTimeout(() => {
-      this.onText?.(id, "Verified browser response");
+      this.onText?.(id, text.includes("SlopBot request") ? "Worker completed request" : text.includes("SlopBot result") ? "Lead received worker result" : "Verified browser response");
       this.onTurnComplete?.(id, "completed");
     }, 20);
     return TurnIdSchema.parse(crypto.randomUUID());
@@ -94,7 +104,7 @@ const browser = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async (reques
 const options = { cwd: directory, databasePath, computer: { baseUrls: [browser.url.href], publicUrls: [browser.url.href] } };
 const seed = new AgentStore(databasePath);
 seed.createProfile({ ...defaultAgentProfiles[0], name: "LEAD", instructions: "Own intake, delegation, and synthesis. Send execution to WORKER and report only results the worker actually returns." });
-seed.createProfile({ ...defaultAgentProfiles[0], id: createAgentId("worker") });
+seed.createProfile(defaultAgentProfiles[1]);
 seed.close();
 const runtime = new CheckRuntime();
 const controller = new AgentController(runtime, options);
@@ -114,11 +124,15 @@ try {
   relayServer.stop(true);
   await assert.rejects(remoteTools(relayServer.url.href, directory));
   await controller.initialize();
-  assert.equal(controller.listAgents().length, 1);
-  assert.equal(controller.botProfile().name, "SlopBot");
-  assert.deepEqual(runtime.optionsSeen?.dynamicTools?.map((tool) => tool.name), ["browser", "computer"]);
-  assert.ok(runtime.optionsSeen?.developerInstructions?.includes(`Your host workspace is ${directory}`));
-  assert.ok(runtime.optionsSeen?.developerInstructions?.includes("tools operate locally on this host"));
+  assert.equal(controller.listAgents().length, 2);
+  assert.equal(controller.botProfile().name, "LEAD");
+  const lead = controller.listAgents().find((agent) => agent.id === "lead");
+  const worker = controller.listAgents().find((agent) => agent.id === "worker");
+  assert.ok(lead && worker);
+  assert.deepEqual(runtime.optionsByThread.get(lead.threadId)?.dynamicTools?.map((tool) => tool.name), ["send_to_agent", "browser", "computer"]);
+  assert.deepEqual(runtime.optionsByThread.get(worker.threadId)?.dynamicTools?.map((tool) => tool.name), ["send_to_agent", "browser", "computer"]);
+  assert.ok(runtime.optionsByThread.get(lead.threadId)?.developerInstructions?.includes(`Your host workspace is ${directory}`));
+  assert.ok(runtime.optionsByThread.get(lead.threadId)?.developerInstructions?.includes("WORKER (worker)"));
   const thread = controller.listAgents()[0]?.threadId;
   await assert.rejects(controller.updateBot({ name: "", role: "Role", instructions: "Instructions" }));
   const handler = new RPCHandler({
@@ -146,21 +160,41 @@ try {
   assert.ok(output.includes("\u001b[1;1H\u001b[0J"));
   assert.equal(controller.botProfile().name, "Nova");
   assert.equal(controller.listAgents()[0]?.threadId, thread);
-  assert.match(runtime.optionsSeen?.developerInstructions ?? "", /Be concise\./);
+  assert.match(runtime.optionsByThread.get(thread ?? lead.threadId)?.developerInstructions ?? "", /Be concise\./);
   assert.ok(requests.includes("/v1/browser/page/navigate"));
   assert.ok(requests.includes("/v1/desktop"));
+  controller.sendMessage("lead", "delegate verification");
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (controller.listAgents().find((item) => item.id === "lead")?.messages.some((message) => message.text === "Worker verified the handoff")) break;
+    await Bun.sleep(20);
+  }
+  const communicated = controller.listAgents();
+  assert.ok(communicated.find((item) => item.id === "worker")?.messages.some((message) => message.text === "Verify the durable handoff" && message.direction === "inbound"));
+  assert.ok(communicated.find((item) => item.id === "lead")?.messages.some((message) => message.text === "Worker verified the handoff" && message.direction === "inbound"));
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const current = controller.listAgents();
+    if (current.every((item) => item.status === "idle") && current.find((item) => item.id === "lead")?.messages.some((message) => message.text === "Lead received worker result")) break;
+    await Bun.sleep(20);
+  }
+  assert.ok(controller.listAgents().every((item) => item.status === "idle"));
+  const created = await controller.createAgent({ id: createAgentId("critic"), name: "CRITIC", role: "Reviews work", instructions: "Review teammate results" });
+  assert.equal(created.id, "critic");
+  assert.equal(controller.listAgents().length, 3);
+  await controller.deleteAgent("critic");
+  assert.equal(controller.listAgents().length, 2);
   controller.close();
   const restored = new AgentController(new CheckRuntime(), options);
   try {
     await restored.initialize();
     assert.equal(restored.botProfile().name, "Nova");
+    assert.equal(restored.listAgents().length, 2);
     assert.equal(restored.listAgents()[0]?.threadId, thread);
     assert.ok(restored.listAgents()[0]?.messages.some((message) => message.text === "Verified browser response"));
   } finally { restored.close(); }
   const stored = new AgentStore(databasePath);
   assert.ok(stored.getAgent(createAgentId("worker")));
   stored.close();
-  console.log("Verified single bot, SQLite configuration, session continuity, browser dispatch, and terminal chat.");
+  console.log("Verified multi-bot messaging, SQLite configuration, session continuity, browser dispatch, and terminal chat.");
 } finally {
   controller.close();
   server?.stop(true);

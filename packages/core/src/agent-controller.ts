@@ -56,15 +56,31 @@ const UserMessageSchema = z
   .refine(({ text, images }) => Boolean(text || images.length), {
     message: "A message or image is required",
   });
+export const CreateAgentInputSchema = z.object({
+  id: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    .pipe(AgentIdSchema),
+  name: textSchema(50),
+  role: textSchema(200),
+  instructions: textSchema(2_000),
+});
 export const UpdateAgentInputSchema = z.object({
   name: textSchema(50),
   role: textSchema(200),
   instructions: textSchema(2_000),
 });
+const SendToAgentArgumentsSchema = z.object({
+  target: textSchema(50),
+  message: textSchema(8_000),
+});
 
 export type AgentControllerOptions = Readonly<
   z.infer<typeof AgentControllerOptionsSchema>
 >;
+export type CreateAgentInput = Readonly<z.infer<typeof CreateAgentInputSchema>>;
 type Agent = Readonly<{
   profile: AgentProfile;
   threadId: ThreadId;
@@ -73,18 +89,45 @@ type Agent = Readonly<{
 
 type ActiveMessage = {
   message: MessageEnvelope;
+  replied: boolean;
 };
 
 const messageRetryLimit = 3;
+const singleBotInstructions = "Handle the user's task directly. Inspect evidence, use your browser and tools when useful, preserve unrelated work, and report verified results.";
 
-export const defaultAgentProfiles = [{
-  id: createAgentId("lead"),
-  name: "SlopBot",
-  aliases: ["lead", "slopbot"],
-  role: "Personal assistant for research and implementation",
-  sandbox: "workspace-write",
-  instructions: "Handle the user's task directly. Inspect evidence, use your browser and tools when useful, preserve unrelated work, and report verified results.",
-}] satisfies readonly [AgentProfile];
+export const defaultAgentProfiles = [
+  {
+    id: createAgentId("lead"),
+    name: "LEAD",
+    aliases: ["lead", "manager", "slopbot"],
+    role: "Coordinates work and owns the final answer",
+    sandbox: "workspace-write",
+    instructions: "Own intake, delegation, and synthesis. Delegate useful execution to teammates and report only results they actually return.",
+  },
+  {
+    id: createAgentId("worker"),
+    name: "WORKER",
+    aliases: ["worker", "researcher", "builder", "reviewer", "ops"],
+    role: "Researches, builds, reviews, and operates",
+    sandbox: "workspace-write",
+    instructions: "Inspect the real flow, gather evidence, implement focused changes, and verify them. Preserve unrelated work and send material results and remaining risks to LEAD.",
+  },
+] satisfies readonly [AgentProfile, AgentProfile];
+
+const sendToAgentTool = {
+  type: "function",
+  name: "send_to_agent",
+  description: "Queue an asynchronous message to another SlopBot bot and return its stable message ID.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      target: { type: "string", description: "Target bot ID, name, or alias" },
+      message: { type: "string", description: "Concise request, result, or handoff" },
+    },
+    required: ["target", "message"],
+    additionalProperties: false,
+  },
+} satisfies DynamicTool;
 
 const browserTool = {
   type: "function",
@@ -100,6 +143,10 @@ const computerTool = {
   description: "Control the separate Linux VM desktop shared with the user. Take a screenshot before using pixel coordinates (1280x1024). Click, type literal text, scroll, or press X11 keys such as Return, ctrl+l, alt+F2. Launch VM apps through its desktop terminal or Run dialog, not the host bash tool. Screenshots return images.",
   inputSchema: toolParameters(ComputerArgumentsSchema),
 } satisfies DynamicTool;
+
+function normalizeAgentName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+agent$/, "");
+}
 
 export class AgentController {
   private readonly agents = new Map<AgentId, Agent>();
@@ -126,11 +173,11 @@ export class AgentController {
     this.runtime.onTurnComplete = (threadId, status) => this.handleTurnComplete(threadId, status);
     await this.runtime.connect();
     await this.reloadSkills();
-    const profile = defaultAgentProfiles[0];
-    this.store.prepareSingleBot(profile);
-    const stored = this.store.getAgent(profile.id);
-    if (!stored) throw new Error("Bot configuration is missing");
-    await this.loadAgent(stored);
+    this.store.upsertProfiles(defaultAgentProfiles);
+    const lead = this.store.getAgent(defaultAgentProfiles[0].id);
+    if (lead?.profile.instructions === singleBotInstructions)
+      this.store.updateProfile(defaultAgentProfiles[0]);
+    for (const stored of this.store.listAgents()) await this.loadAgent(stored);
     await this.recoverPendingMessages();
     for (const agent of this.agents.values()) this.schedule(agent);
   }
@@ -146,6 +193,41 @@ export class AgentController {
 
   botProfile(): AgentProfile {
     return this.agent(defaultAgentProfiles[0].id).profile;
+  }
+
+  async createAgent(input: CreateAgentInput): Promise<AgentView> {
+    const parsed = CreateAgentInputSchema.parse(input);
+    const requestedNames = [parsed.id, parsed.name].map(normalizeAgentName);
+    const conflicts = [...this.agents.values()].some(({ profile }) =>
+      [profile.id, ...profile.aliases].map(normalizeAgentName).some((name) => requestedNames.includes(name)),
+    );
+    if (conflicts) throw new Error("Bot ID or name conflicts with an existing bot or alias");
+    const profile = AgentProfileSchema.parse({
+      ...parsed,
+      aliases: [parsed.id, parsed.name.toLowerCase()],
+      sandbox: "workspace-write",
+    });
+    const stored = this.store.createProfile(profile);
+    try {
+      await this.loadAgent(stored);
+      return this.view(this.agent(profile.id));
+    } catch (error) {
+      this.store.deleteAgent(profile.id, false);
+      throw error;
+    }
+  }
+
+  async deleteAgent(rawAgentId: string): Promise<void> {
+    const agent = this.agent(AgentIdSchema.parse(rawAgentId));
+    if (agent.profile.id === defaultAgentProfiles[0].id)
+      throw new Error("The lead bot cannot be deleted");
+    if (this.agents.size === 1) throw new Error("SlopBot needs at least one bot");
+    if (agent.status === "running" || this.store.hasPendingMessages(agent.profile.id))
+      throw new Error("Wait for bot messaging to finish before deleting it");
+    this.store.deleteAgent(agent.profile.id);
+    this.runtime.discardThread(agent.threadId);
+    this.activeMessages.delete(agent.profile.id);
+    this.agents.delete(agent.profile.id);
   }
 
   async updateBot(input: z.infer<typeof UpdateAgentInputSchema>): Promise<AgentProfile> {
@@ -268,20 +350,27 @@ export class AgentController {
       sandbox: this.sandboxFor(profile),
       serviceName: "slopbot",
       developerInstructions: this.instructionsFor(profile, desktop),
-      dynamicTools: desktop ? [browserTool, computerTool] : [],
+      dynamicTools: [sendToAgentTool, ...(desktop ? [browserTool, computerTool] : [])],
     };
   }
 
   private async recoverPendingMessages(): Promise<void> {
     for (const message of this.store.listProcessingMessages()) {
       const recipient = this.agents.get(message.recipientId);
-      if (!recipient || message.senderId) continue;
+      if (!recipient) {
+        this.store.markFailed(message.id);
+        continue;
+      }
       if (
         await this.runtime.threadContainsText(recipient.threadId, message.id)
       ) {
         this.store.markCompleted(message.id);
+        if (message.replyRequired && !this.store.hasReply(message.id))
+          this.sendRecoveryResult(recipient, message);
       } else {
-        this.store.requeueMessage(message.id, messageRetryLimit);
+        const requeued = this.store.requeueMessage(message.id, messageRetryLimit);
+        if (!requeued && message.replyRequired && !this.store.hasReply(message.id))
+          this.sendRecoveryResult(recipient, message);
       }
     }
   }
@@ -290,10 +379,11 @@ export class AgentController {
     profile: AgentProfile,
     desktop: DesktopAssignment | null,
   ): string {
+    const roster = this.teamDescription();
     const computer = desktop
-      ? " The browser and computer tools target a separate Linux VM, not the host. Its /workspace is a shared mount, not your host working directory. To run commands inside the VM, use its desktop terminal; normal bash runs on the host. If the VM is unavailable, report that for remote operations; host tools remain available."
+      ? " The browser and computer tools target the team's shared Linux VM, not the host. Other bots and the user can see and control the same desktop, so inspect its current state before acting. Its /workspace is a shared mount; normal bash runs on the host."
       : "";
-    return `You are ${profile.name} with stable agent ID ${profile.id}. ${profile.role}. ${profile.instructions} Your runtime runs on ${process.platform === "darwin" ? "macOS" : process.platform}. Your host workspace is ${this.options.cwd}. The read, write, edit, grep, find, ls, and bash tools operate locally on this host, like a normal coding agent. Earlier conversation describing those tools as VM-relayed is outdated.${computer} You are the only bot. Complete tasks directly. Follow relevant skills and never claim an action succeeded without tool evidence.`;
+    return `You are ${profile.name} with stable bot ID ${profile.id}. ${profile.role}. ${profile.instructions} The active SlopBot team is ${roster}. Your runtime runs on ${process.platform === "darwin" ? "macOS" : process.platform}. Your host workspace is ${this.options.cwd}. The read, write, edit, grep, find, ls, and bash tools operate locally on this host.${computer} Your transcript is private. Share only deliberate handoffs through send_to_agent. A send queues a durable message and immediately returns its ID; it does not return the recipient's answer. Do not poll, invent replies, or send receipt-only acknowledgements. Follow relevant skills and never claim an action succeeded without tool evidence.`;
   }
 
   private view(agent: Agent): AgentView {
@@ -329,15 +419,51 @@ export class AgentController {
 
   private assignDesktop(agentId: AgentId): DesktopAssignment | null {
     if (!this.computer) return null;
-    const screen = this.store.assignDesktop(agentId, this.computer.screenCount);
-    if (screen === undefined) return null;
-    return this.computer.assignment(agentId, screen);
+    return this.computer.assignment(agentId, 0);
+  }
+
+  private teamDescription(): string {
+    return this.store.listAgents()
+      .map(({ profile }) => `${profile.name} (${profile.id})`)
+      .join(", ");
   }
 
   private agentByThread(threadId: string): Agent | undefined {
     return [...this.agents.values()].find(
       (agent) => agent.threadId === threadId,
     );
+  }
+
+  private agentByName(target: string, sender: Agent): Agent | undefined {
+    const wanted = normalizeAgentName(target);
+    return [...this.agents.values()].find(
+      (agent) =>
+        agent.profile.id !== sender.profile.id &&
+        (normalizeAgentName(agent.profile.id) === wanted ||
+          agent.profile.aliases.some(
+            (alias) => normalizeAgentName(alias) === wanted,
+          )),
+    );
+  }
+
+  private sendAgentMessage(
+    sender: Agent,
+    recipient: Agent,
+    text: string,
+    parentId: MessageEnvelope["parentId"],
+    replyRequired: boolean,
+  ): MessageEnvelope {
+    const message = this.store.queueMessage({
+      senderId: sender.profile.id,
+      recipientId: recipient.profile.id,
+      parentId,
+      replyRequired,
+      text,
+      images: [],
+      skillName: null,
+    });
+    this.schedule(recipient);
+    return message;
   }
 
   private schedule(agent: Agent): void {
@@ -350,7 +476,7 @@ export class AgentController {
     if (!message) return;
 
     agent.status = "running";
-    const active = { message } satisfies ActiveMessage;
+    const active = { message, replied: false } satisfies ActiveMessage;
     this.activeMessages.set(agent.profile.id, active);
     try {
       const skill = message.skillName
@@ -358,7 +484,15 @@ export class AgentController {
         : undefined;
       if (message.skillName && !skill)
         throw new Error(`Skill not found: ${message.skillName}`);
-      const text = `SlopBot user message ${message.id}:\n\n${message.text}`;
+      const sender = message.senderId
+        ? this.agent(message.senderId)
+        : undefined;
+      const messageText = sender
+        ? message.replyRequired
+          ? `SlopBot request ${message.id} from ${sender.profile.name} (${sender.profile.id}):\n\n${message.text}\n\nAct on this request. Before ending the turn, send exactly one material result to ${sender.profile.id} with send_to_agent. If there is no result, send "(pass):" followed by the reason. Do not send a receipt acknowledgement.`
+          : `SlopBot result ${message.id} for request ${message.parentId ?? "unknown"} from ${sender.profile.name} (${sender.profile.id}):\n\n${message.text}\n\nAct on this result and report it to the user when relevant. Do not send a receipt acknowledgement.`
+        : `SlopBot user message ${message.id}:\n\n${message.text}`;
+      const text = `Active SlopBot team: ${this.teamDescription()}\n\n${messageText}`;
       const input: TurnInput[] = [
         {
           type: "text",
@@ -375,6 +509,7 @@ export class AgentController {
       this.store.setTurn(message.id, turnId);
     } catch (error) {
       this.store.markFailed(message.id);
+      this.ensurePeerResult(agent, active, `(failed): ${errorMessage(error)}`);
       this.activeMessages.delete(agent.profile.id);
       this.store.addAssistantMessage(
         agent.profile.id,
@@ -400,6 +535,34 @@ export class AgentController {
       if (!parsed.success) throw new Error("Invalid browser request");
       return this.browser(sender.profile.id).execute(parsed.data);
     }
+    if (tool === "send_to_agent") {
+      const parsed = SendToAgentArgumentsSchema.safeParse(input);
+      if (!parsed.success) throw new Error("target and message are required");
+      const recipient = this.agentByName(parsed.data.target, sender);
+      if (!recipient) {
+        const available = [...this.agents.values()]
+          .filter((agent) => agent.profile.id !== sender.profile.id)
+          .map((agent) => `${agent.profile.name} (${agent.profile.id})`)
+          .join(", ");
+        throw new Error(`Agent not found. Available agents: ${available}`);
+      }
+      const active = this.activeMessages.get(sender.profile.id);
+      const isReply = Boolean(
+        active?.message.replyRequired &&
+          active.message.senderId === recipient.profile.id,
+      );
+      if (isReply && active?.replied)
+        throw new Error("A result was already sent for this request");
+      const message = this.sendAgentMessage(
+        sender,
+        recipient,
+        parsed.data.message,
+        isReply ? (active?.message.id ?? null) : null,
+        !isReply,
+      );
+      if (isReply && active) active.replied = true;
+      return `Queued message ${message.id} for ${recipient.profile.name} (${recipient.profile.id}).`;
+    }
     throw new Error("Unknown tool");
   }
 
@@ -419,13 +582,50 @@ export class AgentController {
     if (active) {
       if (status === "completed") {
         this.store.markCompleted(active.message.id);
+        this.ensurePeerResult(
+          agent,
+          active,
+          "(pass): completed without sending a result",
+        );
       } else {
         this.store.markFailed(active.message.id);
+        this.ensurePeerResult(
+          agent,
+          active,
+          `(failed): turn ended with status ${status}`,
+        );
       }
       this.activeMessages.delete(agent.profile.id);
     }
     agent.status = status === "completed" ? "idle" : "error";
     this.schedule(agent);
+  }
+
+  private ensurePeerResult(
+    agent: Agent,
+    active: ActiveMessage,
+    fallback: string,
+  ): void {
+    const senderId = active.message.senderId;
+    if (!active.message.replyRequired || active.replied || !senderId) return;
+    const sender = this.agents.get(senderId);
+    if (!sender) return;
+    this.sendAgentMessage(agent, sender, fallback, active.message.id, false);
+    active.replied = true;
+  }
+
+  private sendRecoveryResult(agent: Agent, message: MessageEnvelope): void {
+    const sender = message.senderId
+      ? this.agents.get(message.senderId)
+      : undefined;
+    if (sender)
+      this.sendAgentMessage(
+        agent,
+        sender,
+        "(failed): host restarted before a result was recorded",
+        message.id,
+        false,
+      );
   }
 
   private async reloadSkills(): Promise<void> {
