@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import type * as React from "react";
 import { api } from "@/lib/api";
-import { providerChoices, ProviderIdSchema } from "@slopbot/contracts/providers";
-import type { ProviderId } from "@slopbot/contracts/providers";
 
 type Agent = Awaited<ReturnType<typeof api.agents.list>>[number];
 type Skill = Awaited<ReturnType<typeof api.skills.list>>[number];
@@ -10,9 +8,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function Settings({ agent, settings, refresh, login }: Readonly<{ agent: Agent; settings: React.RefObject<HTMLDialogElement | null>; refresh: () => Promise<void>; login: (provider: ProviderId) => Promise<void> }>): React.ReactNode {
-  const [provider, setProvider] = useState<ProviderId>(agent.provider);
-  const [models, setModels] = useState<readonly { id: string; name: string }[]>([]);
+export function Settings({ agent, settings, refresh }: Readonly<{ agent: Agent; settings: React.RefObject<HTMLDialogElement | null>; refresh: () => Promise<void> }>): React.ReactNode {
   const [skills, setSkills] = useState<readonly Skill[]>([]);
   const [settingsError, setSettingsError] = useState("");
   const refreshSkills = async (): Promise<void> => { setSkills(await api.skills.list()); };
@@ -65,17 +61,6 @@ export function Settings({ agent, settings, refresh, login }: Readonly<{ agent: 
           {settingsError}
         </p>
       )}
-      <div className="mb-5 grid gap-3 text-sm">
-        <p>Current model: {agent.provider} / {agent.model}</p>
-        <label>Provider <select className="rounded bg-raised p-2" value={provider} onChange={(event) => setProvider(ProviderIdSchema.parse(event.target.value))}>
-          {providerChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select></label>
-        <button className="rounded bg-brand p-2 text-zinc-900" onClick={() => void login(provider)}>Sign in / switch provider</button>
-        <button onClick={() => void api.auth.models().then(setModels).catch((error: unknown) => setSettingsError(errorText(error)))}>Load available models</button>
-        <label>Model <select aria-label="Model" className="max-w-full rounded bg-raised p-2" value={agent.model} onChange={(event) => {
-          void api.agents.profile().then((profile) => api.agents.update({ ...profile, model: event.target.value })).then(refresh).catch((error: unknown) => setSettingsError(errorText(error)));
-        }}><option value={agent.model}>{agent.model}</option>{models.filter((item) => item.id !== agent.model).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-      </div>
       <p className="text-sm">Bot configuration is stored in SQLite. Use <code>bun run chat</code> and <code>/config</code> to inspect or edit it.</p>
       <div className="my-5 border-t border-line" />
       <div className="text-[11px] font-semibold tracking-[.08em] text-muted-foreground">

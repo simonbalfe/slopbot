@@ -1,5 +1,3 @@
-import { defaultProvider, providers, providerChoices, ProviderIdSchema } from "@slopbot/contracts/providers";
-import type { ProviderId } from "@slopbot/contracts/providers";
 import { Desktop } from "@/components/desktop";
 import { Settings } from "@/components/settings";
 import { createRoot } from "react-dom/client";
@@ -179,7 +177,6 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
 }
 
 function App(): React.ReactNode {
-  const [provider, setProvider] = useState<ProviderId>(defaultProvider);
   const [auth, setAuth] = useState<AuthState>();
   const [agents, setAgents] = useState<readonly Agent[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -195,9 +192,8 @@ function App(): React.ReactNode {
   const refreshAuth = async (): Promise<void> => {
     setAuth(await api.auth.state());
   };
-  const login = async (selectedProvider: ProviderId = provider): Promise<void> => {
-    try { setAuth(await api.auth.login({ provider: selectedProvider })); await refresh(); }
-    catch (error) { setAuth({ status: "error", message: errorText(error) }); }
+  const login = async (): Promise<void> => {
+    setAuth(await api.auth.login());
   };
 
   const refresh = async (): Promise<void> => {
@@ -269,13 +265,9 @@ function App(): React.ReactNode {
             Connect your model provider
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            Sign in with your OpenAI or Nous account. Credentials stay in your local SlopBot data directory.
+            Sign in with ChatGPT Plus or Pro before starting the bots.
+            Credentials stay in your local SlopBot data volume.
           </p>
-          <label className="mt-4 block text-sm">Provider
-            <select className="ml-3 rounded bg-raised p-2" value={provider} onChange={(event) => { setProvider(ProviderIdSchema.parse(event.target.value)); }} disabled={auth.status === "pending" || auth.status === "starting"}>
-              {providerChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </label>
           {auth.status === "pending" ? (
             <div className="mt-6 rounded-2xl bg-raised p-5">
               <div className="text-xs font-semibold tracking-[.08em] text-muted-foreground">
@@ -310,7 +302,7 @@ function App(): React.ReactNode {
             >
               {auth.status === "starting"
                 ? auth.message
-                : `Sign in with ${providers[provider].name}`}
+                : "Connect ChatGPT Plus / Pro"}
             </button>
           )}
           {auth.status === "error" && (
@@ -431,7 +423,7 @@ function App(): React.ReactNode {
         </form>
       </section>
       <Desktop agent={agent} />
-      <Settings agent={agent} settings={settings} refresh={refresh} login={login} />
+      <Settings agent={agent} settings={settings} refresh={refresh} />
     </main>
   );
 }

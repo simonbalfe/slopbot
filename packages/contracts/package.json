@@ -4,8 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./computer": "./src/computer.ts",
-    "./providers": "./src/providers.ts"
+    "./computer": "./src/computer.ts"
   },
   "scripts": { "check": "tsc --noEmit" },
   "dependencies": { "zod": "4.5.4" }

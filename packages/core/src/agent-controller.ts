@@ -1,5 +1,4 @@
 import { toolParameters } from "@slopbot/contracts/computer";
-import { defaultProvider, defaultModel, ProviderIdSchema } from "@slopbot/contracts/providers";
 import { z } from "zod";
 
 import { AgentStore } from "./agent-store.ts";
@@ -61,8 +60,6 @@ export const UpdateAgentInputSchema = z.object({
   name: textSchema(50),
   role: textSchema(200),
   instructions: textSchema(2_000),
-  provider: ProviderIdSchema.optional(),
-  model: textSchema(200).optional(),
 });
 
 export type AgentControllerOptions = Readonly<
@@ -82,8 +79,6 @@ const messageRetryLimit = 3;
 
 export const defaultAgentProfiles = [{
   id: createAgentId("lead"),
-  provider: defaultProvider,
-  model: defaultModel,
   name: "SlopBot",
   aliases: ["lead", "slopbot"],
   role: "Personal assistant for research and implementation",
@@ -269,8 +264,6 @@ export class AgentController {
   ): ThreadOptions {
     return {
       cwd: this.options.cwd,
-      provider: profile.provider,
-      model: profile.model,
       approvalPolicy: "never",
       sandbox: this.sandboxFor(profile),
       serviceName: "slopbot",
@@ -307,8 +300,6 @@ export class AgentController {
     return {
       id: agent.profile.id,
       name: agent.profile.name,
-      provider: agent.profile.provider,
-      model: agent.profile.model,
       role: agent.profile.role,
       sandbox: this.sandboxFor(agent.profile),
       threadId: agent.threadId,

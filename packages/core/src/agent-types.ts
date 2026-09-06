@@ -1,5 +1,3 @@
-import { ModelSelectionSchema } from "@slopbot/contracts/providers";
-export { ModelSelectionSchema } from "@slopbot/contracts/providers";
 import { z } from "zod";
 
 import { textSchema } from "./protocol.ts";
@@ -48,7 +46,6 @@ export const AgentProfileSchema = z.object({
   role: textSchema(200),
   sandbox: SandboxModeSchema,
   instructions: textSchema(2_000),
-  ...ModelSelectionSchema.shape,
 });
 export const MessageEnvelopeSchema = z.object({
   id: MessageIdSchema,
@@ -80,8 +77,6 @@ export const AgentMessageSchema = z.object({
   status: MessageStatusSchema.nullable(),
 });
 export const AgentViewSchema = AgentProfileSchema.pick({
-  provider: true,
-  model: true,
   id: true,
   name: true,
   role: true,
