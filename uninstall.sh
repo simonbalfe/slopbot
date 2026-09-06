@@ -21,6 +21,12 @@ if [ -f "$bin_path" ] && grep -F "$root" "$bin_path" >/dev/null 2>&1; then rm -f
 
 if [ "$purge" -eq 1 ]; then
   case "$data_dir" in ""|/|"$HOME"|"$root") echo "Refusing unsafe data path: $data_dir" >&2; exit 1;; esac
+  lima_bin=$(command -v limactl || true)
+  if [ -z "$lima_bin" ] && [ -x /opt/homebrew/bin/limactl ]; then lima_bin=/opt/homebrew/bin/limactl; fi
+  if [ -z "$lima_bin" ] && [ -x /usr/local/bin/limactl ]; then lima_bin=/usr/local/bin/limactl; fi
+  if [ -n "$lima_bin" ] && "$lima_bin" list --quiet | grep -Fx slopbot >/dev/null 2>&1; then
+    "$lima_bin" delete --force --yes slopbot
+  fi
   rm -rf "$data_dir"
 fi
 

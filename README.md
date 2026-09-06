@@ -24,11 +24,11 @@ Or download the installer:
 curl -fsSL https://raw.githubusercontent.com/simonbalfe/slopbot/main/install.sh | sh
 ```
 
-The one-shot installer installs Bun if needed, clones and builds SlopBot, and creates `~/.local/bin/slopbot`. Git is required. Remote installation defaults to `~/.local/share/slopbot`; override it with `SLOPBOT_INSTALL_DIR`, the command directory with `SLOPBOT_BIN_DIR`, or persistent state with `SLOPBOT_DATA_DIR`. Existing destination directories are never overwritten. Lima is optional: install it with `brew install lima` for computer access.
+The one-shot installer installs Bun if needed, clones and builds SlopBot, creates `~/.local/bin/slopbot`, installs Lima through Homebrew when needed, and provisions the computer VM. Git and Homebrew are required. Remote installation defaults to `~/.local/share/slopbot`; override it with `SLOPBOT_INSTALL_DIR`, the command directory with `SLOPBOT_BIN_DIR`, or persistent state with `SLOPBOT_DATA_DIR`. Existing destination directories are never overwritten. Set `SLOPBOT_SKIP_COMPUTER=1` to install only the runtime when connecting to a remote computer.
 
-Run `slopbot uninstall` to remove the service, command, and installer-managed application files while preserving state. Run `slopbot uninstall --purge` to remove state too. A source checkout is never deleted.
+Run `slopbot uninstall` to remove the service, command, and installer-managed application files while preserving state and the computer. Run `slopbot uninstall --purge` to remove state and the Lima computer too. A source checkout is never deleted.
 
-This starts SlopBot natively and opens terminal chat. Run `bun run vm:up` when you want the separate computer available. On first use, follow the printed Codex login URL and enter its device code. The current model is OpenAI Codex; Grok model support is planned.
+This starts SlopBot natively and opens terminal chat. The separate computer is ready after installation. On first use, follow the printed Codex login URL and enter its device code. The current model is OpenAI Codex; Grok model support is planned.
 
 | Command | Action |
 |---|---|
@@ -42,6 +42,17 @@ This starts SlopBot natively and opens terminal chat. Run `bun run vm:up` when y
 | `bun run vm:shell` | Enter the VM's terminal at `/workspace` |
 | `bun run vm:stop` | Stop the computer; SlopBot keeps running |
 | `bun run stop` | Stop both; retain their data |
+
+The installed CLI manages the computer without requiring commands from the source directory:
+
+| Command | Action |
+|---|---|
+| `slopbot computer setup` | Install Lima when needed, then create or update the computer |
+| `slopbot computer start` | Start and update an existing computer |
+| `slopbot computer status` | Show the Lima computer status |
+| `slopbot computer open` | Open the computer desktop |
+| `slopbot computer shell` | Enter the computer shell at `/workspace` |
+| `slopbot computer stop` | Stop the computer while retaining its data |
 
 Control the same desktop as the bot at <http://127.0.0.1:6080/vnc/vnc.html>. The optional chat UI is at <http://127.0.0.1:4317>. Right-click the desktop for apps, or run `DISPLAY=:99 xterm &` inside the VM shell.
 
@@ -57,7 +68,7 @@ See the [computer interface](docs/computer-api.md) for configuration, request/re
 
 ## Files and persistence
 
-The VM has 2 CPUs, 3 GiB RAM, and a 20 GiB sparse disk under `~/.lima/slopbot`. It mounts `~/workspace` read/write at `/workspace`. To choose a different host folder, set `SLOPBOT_WORKSPACE_PATH` in the ignored project `.env` before creating the VM. Existing mounts can be changed with `limactl edit slopbot` while stopped.
+The installer pulls a Debian 13 base image and creates a VM with 2 CPUs, 3 GiB RAM, and a 20 GiB sparse disk under `~/.lima/slopbot`. It mounts `~/workspace` read/write at `/workspace`. To choose a different host folder, set `SLOPBOT_WORKSPACE_PATH` before installation or before running `slopbot computer setup`. Existing mounts can be changed with `limactl edit slopbot` while stopped.
 
 | Location | Contents |
 |---|---|

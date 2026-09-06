@@ -3,7 +3,6 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const lima = Bun.which("limactl") ?? "/opt/homebrew/bin/limactl";
 const action = process.argv[2] ?? "up";
 
 async function run(command: string[]): Promise<void> {
@@ -11,11 +10,38 @@ async function run(command: string[]): Promise<void> {
   if (await child.exited !== 0) throw new Error(`${command[0]} ${command[1]} failed`);
 }
 
-if (action === "shell") {
+function findExecutable(name: string, fallbacks: readonly string[]): string | undefined {
+  return Bun.which(name) ?? fallbacks.find((candidate) => Bun.file(candidate).size > 0);
+}
+
+async function requireLima(install: boolean): Promise<string> {
+  const existing = findExecutable("limactl", ["/opt/homebrew/bin/limactl", "/usr/local/bin/limactl"]);
+  if (existing) return existing;
+  if (!install) throw new Error("Lima is not installed. Run: slopbot computer setup");
+
+  const brew = findExecutable("brew", ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]);
+  if (!brew) throw new Error("Homebrew is required to install Lima. Install it from https://brew.sh, then run: slopbot computer setup");
+  console.log("Installing the Lima computer dependency with Homebrew…");
+  await run([brew, "install", "lima"]);
+
+  const installed = findExecutable("limactl", ["/opt/homebrew/bin/limactl", "/usr/local/bin/limactl"]);
+  if (!installed) throw new Error("Homebrew completed, but limactl could not be found");
+  return installed;
+}
+
+if (action === "open") {
+  await run(["open", "http://127.0.0.1:6080/vnc/vnc.html"]);
+} else if (action === "status") {
+  const lima = await requireLima(false);
+  await run([lima, "list", "slopbot"]);
+} else if (action === "shell") {
+  const lima = await requireLima(false);
   await run([lima, "shell", "--workdir=/workspace", "slopbot"]);
 } else if (action === "stop") {
+  const lima = await requireLima(false);
   await run([lima, "stop", "slopbot"]);
-} else if (action === "up") {
+} else if (action === "up" || action === "setup") {
+  const lima = await requireLima(action === "setup");
   const temporary = mkdtempSync(join(tmpdir(), "slopbot-vm-"));
   const guestArchive = `/tmp/${temporary.split("/").at(-1)}.tar`;
   try {
@@ -74,5 +100,5 @@ if (action === "shell") {
   }
   console.log("Computer ready: http://127.0.0.1:6080/vnc/vnc.html");
 } else {
-  throw new Error("Usage: bun vm/manage.ts up|shell|stop");
+  throw new Error("Usage: bun vm/manage.ts setup|up|status|open|shell|stop");
 }

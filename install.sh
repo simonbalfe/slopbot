@@ -7,6 +7,16 @@ if [ "$(uname -s)" != Darwin ]; then
 fi
 
 command -v git >/dev/null 2>&1 || { echo 'Install Git first: xcode-select --install' >&2; exit 1; }
+if [ "${SLOPBOT_SKIP_COMPUTER:-0}" != 1 ] \
+  && ! command -v limactl >/dev/null 2>&1 \
+  && [ ! -x /opt/homebrew/bin/limactl ] \
+  && [ ! -x /usr/local/bin/limactl ] \
+  && ! command -v brew >/dev/null 2>&1 \
+  && [ ! -x /opt/homebrew/bin/brew ] \
+  && [ ! -x /usr/local/bin/brew ]; then
+  echo 'Homebrew is required to install the SlopBot computer. Install it from https://brew.sh or set SLOPBOT_SKIP_COMPUTER=1.' >&2
+  exit 1
+fi
 if ! command -v bun >/dev/null 2>&1 && [ ! -x "$HOME/.bun/bin/bun" ]; then
   installer=$(mktemp)
   trap 'rm -f "$installer"' EXIT HUP INT TERM
@@ -51,9 +61,15 @@ quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
   printf ' apps/server/src/launch.ts "$@"\n'
 } > "$bin_dir/slopbot"
 chmod 755 "$bin_dir/slopbot"
+if [ "${SLOPBOT_SKIP_COMPUTER:-0}" != 1 ]; then
+  printf '\nSetting up the SlopBot computer VM…\n'
+  "$bun_bin" vm/manage.ts setup
+fi
 printf '\nInstalled SlopBot. Run: %s/slopbot\n' "$bin_dir"
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
   *) printf 'Add this directory to your shell PATH: %s\n' "$bin_dir" ;;
 esac
-printf 'Optional computer VM: install Lima, then run bun run vm:up from %s\n' "$install_dir"
+if [ "${SLOPBOT_SKIP_COMPUTER:-0}" = 1 ]; then
+  printf 'Computer setup skipped. Run %s/slopbot computer setup when needed.\n' "$bin_dir"
+fi

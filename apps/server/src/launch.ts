@@ -9,6 +9,27 @@ if (process.argv[2] === "uninstall") {
   });
   process.exit(await uninstall.exited);
 }
+if (process.argv[2] === "computer") {
+  const requested = process.argv[3] ?? "status";
+  const actions = {
+    setup: "setup",
+    start: "up",
+    status: "status",
+    open: "open",
+    shell: "shell",
+    stop: "stop",
+  } as const;
+  const isComputerAction = (value: string): value is keyof typeof actions => Object.hasOwn(actions, value);
+  if (!isComputerAction(requested)) {
+    console.error("Usage: slopbot computer setup|start|status|open|shell|stop");
+    process.exit(1);
+  }
+  const action = actions[requested];
+  const computer = Bun.spawn([process.execPath, join(root, "vm/manage.ts"), action], {
+    cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit",
+  });
+  process.exit(await computer.exited);
+}
 const temporary = mkdtempSync(join(tmpdir(), "slopbot-start-"));
 const log = join(temporary, "startup.log");
 const descriptor = openSync(log, "w", 0o600);
