@@ -19,6 +19,7 @@ bun_bin=$(command -v bun || true)
 if [ -z "$bun_bin" ]; then bun_bin="$HOME/.bun/bin/bun"; fi
 
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+managed_install=0
 if [ -f "$source_dir/apps/server/src/launch.ts" ]; then
   install_dir=$source_dir
 else
@@ -28,15 +29,22 @@ else
     exit 1
   fi
   git clone https://github.com/simonbalfe/slopbot.git "$install_dir"
+  managed_install=1
 fi
 cd "$install_dir"
 "$bun_bin" install --frozen-lockfile
 "$bun_bin" run build
 bin_dir=${SLOPBOT_BIN_DIR:-"$HOME/.local/bin"}
+data_dir=${SLOPBOT_DATA_DIR:-"$HOME/.local/share/slopbot-data"}
 mkdir -p "$bin_dir" "$HOME/workspace"
+if [ "$managed_install" -eq 1 ]; then touch "$install_dir/.slopbot-managed-install"; fi
 quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 {
-  printf '#!/bin/sh\ncd '
+  printf '#!/bin/sh\nSLOPBOT_BIN_PATH='
+  quote "$bin_dir/slopbot"
+  printf '\nexport SLOPBOT_BIN_PATH\nif [ -z "${SLOPBOT_DATA_DIR:-}" ]; then SLOPBOT_DATA_DIR='
+  quote "$data_dir"
+  printf '; export SLOPBOT_DATA_DIR; fi\ncd '
   quote "$install_dir"
   printf ' || exit\nexec '
   quote "$bun_bin"

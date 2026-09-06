@@ -24,7 +24,9 @@ Or download the installer:
 curl -fsSL https://raw.githubusercontent.com/simonbalfe/slopbot/main/install.sh | sh
 ```
 
-The installer installs Bun if needed, builds the dashboard, and creates `~/.local/bin/slopbot`. Git is required. Remote installation defaults to `~/.local/share/slopbot`; override with `SLOPBOT_INSTALL_DIR`. Override the command directory with `SLOPBOT_BIN_DIR`. Existing destination directories are never overwritten. Lima is optional: install it with `brew install lima` for computer access.
+The one-shot installer installs Bun if needed, clones and builds SlopBot, and creates `~/.local/bin/slopbot`. Git is required. Remote installation defaults to `~/.local/share/slopbot`; override it with `SLOPBOT_INSTALL_DIR`, the command directory with `SLOPBOT_BIN_DIR`, or persistent state with `SLOPBOT_DATA_DIR`. Existing destination directories are never overwritten. Lima is optional: install it with `brew install lima` for computer access.
+
+Run `slopbot uninstall` to remove the service, command, and installer-managed application files while preserving state. Run `slopbot uninstall --purge` to remove state too. A source checkout is never deleted.
 
 This starts SlopBot natively and opens terminal chat. Run `bun run vm:up` when you want the separate computer available. On first use, follow the printed Codex login URL and enter its device code. The current model is OpenAI Codex; Grok model support is planned.
 
@@ -59,8 +61,8 @@ The VM has 2 CPUs, 3 GiB RAM, and a 20 GiB sparse disk under `~/.lima/slopbot`. 
 
 | Location | Contents |
 |---|---|
-| Host `data/runtime/slopbot.sqlite` | Bot configuration and messages, stable bot ID `lead` |
-| Host `data/runtime/pi` | Model authentication and Pi session history |
+| Host `~/.local/share/slopbot-data/slopbot.sqlite` | Installed bot configuration and messages, stable bot ID `lead` |
+| Host `~/.local/share/slopbot-data/pi` | Model authentication and Pi session history |
 | VM `/data/browser` | Chromium profile and saved website logins |
 | VM `/home/slopbot` | Persistent Linux home |
 | VM `/workspace` | Shared work files; downloads go to `Downloads` |

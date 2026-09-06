@@ -3,6 +3,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "../../..");
+if (process.argv[2] === "uninstall") {
+  const uninstall = Bun.spawn(["sh", join(root, "uninstall.sh"), ...process.argv.slice(3)], {
+    cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit",
+  });
+  process.exit(await uninstall.exited);
+}
 const temporary = mkdtempSync(join(tmpdir(), "slopbot-start-"));
 const log = join(temporary, "startup.log");
 const descriptor = openSync(log, "w", 0o600);

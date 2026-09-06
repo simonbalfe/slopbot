@@ -7,3 +7,4 @@ apps/server/ui-dist/
 data/
 workspace/
 .env
+.slopbot-managed-install

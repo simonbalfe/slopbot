@@ -10,7 +10,7 @@
     "dev": "bun run up && bun run --filter @slopbot/web dev",
     "start": "bun run build:web && bun run start:server",
     "start:server": "bun run --filter @slopbot/server start",
-    "check": "bun run --filter '*' check && tsc --noEmit -p vm",
+    "check": "sh -n install.sh uninstall.sh && bun run --filter '*' check && tsc --noEmit -p vm",
     "build": "bun run build:web",
     "build:web": "bun run --filter @slopbot/web build",
     "chat": "bun apps/server/src/launch.ts",
