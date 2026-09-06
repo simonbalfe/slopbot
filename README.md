@@ -2,7 +2,7 @@
 
 SlopBot is a small app for running persistent AI bots that can use a computer and talk to each other.
 
-Each bot has its own identity, instructions, private conversation, and Pi session. Bots coordinate through durable messages instead of sharing hidden context. The default team has a `lead` bot that coordinates work and a `worker` bot that executes it; more bots can be added from the UI.
+Each bot has its own identity, instructions, private conversation, and Pi session. Bots coordinate through durable messages, keeping every handoff deliberate and visible. The default team has a `lead` bot that coordinates work and a `worker` bot that executes it; more bots can be added from the UI.
 
 ```mermaid
 flowchart LR
@@ -32,17 +32,17 @@ curl -fsSL https://raw.githubusercontent.com/simonbalfe/slopbot/main/install.sh 
 slopbot
 ```
 
-The installer builds SlopBot and prepares its Linux computer. Git and Homebrew are required. Existing installation directories are never overwritten.
+The installer builds SlopBot and prepares its Linux computer. Git and Homebrew are required. Existing installation directories are preserved.
 
 Open the web interface at <http://127.0.0.1:4317>. The first run asks you to connect a ChatGPT Plus or Pro account.
 
 ## How the computer works
 
-SlopBot itself runs as a normal macOS process. Lima manages a lightweight Debian virtual machine containing Chromium and a desktop. Lima is a VM manager, not a container. The bots use that VM as their computer, and you can view the same desktop at <http://127.0.0.1:6080/vnc/vnc.html>.
+SlopBot runs as a normal macOS process. Lima uses Apple's native virtualization framework to manage a lightweight Debian virtual machine. SlopBot uses this VM to give every bot a shared Linux computer with Chromium, a desktop, and persistent browser state. You can view and control the same desktop at <http://127.0.0.1:6080/vnc/vnc.html>.
 
 The VM mounts `~/workspace` at `/workspace`. Bot configuration, messages, model authentication, and Pi sessions remain on the Mac. Browser logins remain inside the VM.
 
-Docker is optional and only packages the SlopBot runtime; it does not replace the default Lima computer.
+Docker provides an optional portable package for the SlopBot runtime. Lima provides the local Linux computer.
 
 ## Development
 

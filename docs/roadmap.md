@@ -15,7 +15,7 @@ SlopBot should remain a small multi-bot app: persistent bots, private conversati
 
 1. Let users stop or redirect active work.
 2. Add clear approval prompts for consequential actions.
-3. Add small, scoped memories without merging private conversations.
+3. Add small, scoped memories that preserve private conversations.
 4. Add routines for scheduled work.
 5. Give each bot its own browser profile and session inside the same shared VM.
 
@@ -24,6 +24,6 @@ SlopBot should remain a small multi-bot app: persistent bots, private conversati
 - A user message takes priority over internal work.
 - A queued message survives restart and wakes its recipient no more than once.
 - Every bot keeps its own private transcript.
-- Bots communicate through explicit messages, never invisible shared context.
+- Bots communicate through explicit messages, keeping shared context intentional.
 - The host validates state changes and external actions.
-- The interface should stay understandable without exposing runtime internals.
+- The interface keeps runtime internals out of the user's way.

@@ -13,7 +13,7 @@ SlopBot uses this API for browser and desktop control. Its standard file and she
 | `SLOPBOT_COMPUTER_API_KEY` | Optional shared key, matching the computer service's `SANDBOX_API_KEY` |
 | `SLOPBOT_WORKSPACE` | Local SlopBot host workspace; independent of the VM working directory |
 
-Locally, native SlopBot and your browser use `http://127.0.0.1:6080`. Optional Docker packaging uses `http://host.docker.internal:6080` for the API. For a remote VM, supply its reachable URL or a private tunnel address. Lima is only the local provisioner and is not part of the wire protocol.
+Locally, native SlopBot and your browser use `http://127.0.0.1:6080`. Optional Docker packaging uses `http://host.docker.internal:6080` for the API. For a remote VM, supply its reachable URL or a private tunnel address. Lima manages the local VM lifecycle, while the HTTP API gives SlopBot the same computer connection across local and remote environments.
 
 When configured, send `X-AIO-API-Key` on every `/v1/*` request. The local service binds to loopback; VNC and CDP do not use this API key. Use a private connection for remote access.
 
