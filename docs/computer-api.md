@@ -1,6 +1,6 @@
 # Computer interface
 
-An agent harness connects to one HTTP base URL. That computer owns the working filesystem, shell processes, Chromium profile, and desktop. The service runs no model or agent session and needs no model credentials.
+An agent harness connects to one HTTP base URL. That computer owns the working filesystem, shell processes, Chromium profiles, and desktop. The service runs no model or agent session and needs no model credentials.
 
 SlopBot uses this API for browser and desktop control. Its standard file and shell tools run locally on the runtime host. The optional [remote-tools.ts](../packages/core/src/remote-tools.ts) adapter and executor endpoints remain available for other harnesses. JSON request/response schemas live in [computer.ts](../packages/contracts/src/computer.ts); browser operations are listed in the [desktop service reference](../packages/browser-runtime/README.md).
 
@@ -47,7 +47,7 @@ Calls return their final result, with a five-minute execution ceiling. There is 
 
 ## Browser and desktop
 
-The same base URL serves `/v1/browser/*` for page operations and `POST /v1/desktop` for full-screen screenshots, clicks, typing, keys, and scrolling. `{"action":"screenshot"}` returns a PNG. Other desktop operations return `{success, data}`.
+The same base URL serves `/v1/browser/*` for page operations and `POST /v1/desktop` for full-screen screenshots, clicks, typing, keys, and scrolling. Send a stable bot ID in `X-SlopBot-Profile` to select its persistent browser profile. `{"action":"screenshot"}` returns a PNG. Other desktop operations return `{success, data}`.
 
 The user controls the same display at `/vnc/vnc.html`. VNC is the interactive display transport; shell and file operations do not pass through VNC.
 

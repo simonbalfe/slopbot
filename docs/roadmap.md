@@ -28,15 +28,14 @@ flowchart LR
 - [x] Multiple persistent bots with separate identities and conversations.
 - [x] Bots can send durable messages and replies to each other.
 - [x] Messages recover after SlopBot restarts.
-- [x] Every bot can use the same Linux computer, browser, and desktop.
+- [x] Every bot uses the same Linux computer and keeps a separate browser profile.
 - [x] The installer sets up SlopBot and Lima on macOS and Linux.
+- [x] Users can redirect or stop active bot work.
+- [x] Consequential tool calls pause for allow-once approval.
 
 ## Next
 
-- [ ] Give each bot its own browser profile inside the shared VM.
-- [ ] Let users stop or redirect active work.
 - [ ] Add small private and shared memories.
-- [ ] Ask for approval before consequential actions.
 - [ ] Add scheduled routines.
 
 ## Later

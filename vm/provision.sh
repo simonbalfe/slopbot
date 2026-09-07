@@ -4,9 +4,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl unzip nodejs git ripgrep rsync chromium fonts-liberation openbox xterm scrot xdotool dbus-x11 x11vnc xvfb
 if ! id slopbot >/dev/null 2>&1; then useradd -m -s /bin/bash slopbot; fi
-mkdir -p /data/browser /opt/slopbot
+mkdir -p /data/browser /data/browser-profiles /opt/slopbot
 chown -R slopbot:slopbot /data /opt/slopbot
-chmod 700 /data/browser
+chmod 700 /data/browser /data/browser-profiles
 if ! command -v bun >/dev/null; then
   install_dir=$(mktemp -d)
   case $(uname -m) in aarch64) bun_arch=aarch64 ;; x86_64) bun_arch=x64 ;; *) exit 1 ;; esac

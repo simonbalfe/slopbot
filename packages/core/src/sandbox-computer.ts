@@ -19,33 +19,36 @@ export type SandboxComputerOptions = Readonly<
 >;
 
 export class SandboxComputer {
-  private readonly browsers: readonly SandboxBrowser[];
+  private readonly browsers = new Map<string, SandboxBrowser>();
   private readonly options: SandboxComputerOptions;
 
   constructor(options: SandboxComputerOptions) {
     this.options = SandboxComputerOptionsSchema.parse(options);
-    this.browsers = this.options.baseUrls.map(
-      (url) => new SandboxBrowser(url, this.options.apiKey),
-    );
   }
 
   get screenCount(): number {
-    return this.browsers.length;
+    return this.options.baseUrls.length;
   }
 
-  assignment(_agentId: AgentId, screen: number): DesktopAssignment {
+  assignment(agentId: AgentId, screen: number): DesktopAssignment {
     const publicUrl = this.options.publicUrls[screen];
     if (!publicUrl) throw new Error("No sandbox browser available");
     return DesktopAssignmentSchema.parse({
       computerId: "slopbot-browser",
       screen,
+      browserProfile: agentId,
       viewerUrl: `${publicUrl.replace(/\/$/, "")}/vnc/vnc.html`,
     });
   }
 
-  browser(screen: number): SandboxBrowser {
-    const browser = this.browsers[screen];
-    if (!browser) throw new Error("No sandbox browser available");
+  browser(agentId: AgentId, screen: number): SandboxBrowser {
+    const url = this.options.baseUrls[screen];
+    if (!url) throw new Error("No sandbox browser available");
+    const key = `${screen}:${agentId}`;
+    const existing = this.browsers.get(key);
+    if (existing) return existing;
+    const browser = new SandboxBrowser(url, agentId, this.options.apiKey);
+    this.browsers.set(key, browser);
     return browser;
   }
 }

@@ -42,14 +42,19 @@ const ScrollSchema = z.object({
   amount: z.number().finite().nonnegative(),
 });
 const KeySchema = z.object({ key: z.string().min(1).max(100) });
+const ProfileSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).default("lead");
 
 const env = EnvSchema.parse(process.env);
 process.env["DISPLAY"] = env.DISPLAY;
 
 const desktop = await startDesktop(env);
-const { context } = desktop;
 
-async function page(): Promise<Page> {
+function profile(value: string | undefined): string {
+  return ProfileSchema.parse(value);
+}
+
+async function page(profileId: string): Promise<Page> {
+  const context = await desktop.context(profileId);
   return context.pages().find((candidate) => !candidate.isClosed()) ?? context.newPage();
 }
 
@@ -66,7 +71,7 @@ app.use("/v1/*", async (requestContext, next) => {
   return next();
 });
 
-app.get("/health", (requestContext) => requestContext.json(ok({ ready: true })));
+app.get("/health", (requestContext) => requestContext.json(ok({ ready: true, browserProfiles: desktop.profileCount() })));
 app.route("/v1/tools", toolRelay(env.BROWSER_WORKSPACE));
 app.post("/v1/desktop", async (requestContext) => {
   const input = ComputerArgumentsSchema.parse(await requestContext.req.json());
@@ -105,33 +110,34 @@ async function desktopCommand(args: string[]): Promise<void> {
     if (await child.exited !== 0) throw new Error(`${args[0]} failed: ${error}`);
   } finally { clearTimeout(timer); }
 }
-app.get("/v1/browser/info", async (requestContext) =>
-  requestContext.json(
-    ok({
-      ready: true,
-      protocol: "cdp",
-      cdp_url: env.BROWSER_CDP_PUBLIC_URL,
-      url: (await page()).url(),
-    }),
-  ),
-);
-app.get("/v1/browser/screenshot", async () => {
-  const image = await (await page()).screenshot({ type: "png" });
+app.get("/v1/browser/info", async (requestContext) => {
+  const profileId = profile(requestContext.req.header("X-SlopBot-Profile"));
+  const activePage = await page(profileId);
+  return requestContext.json(ok({
+    ready: true,
+    protocol: "cdp",
+    cdp_url: profileId === "lead" ? env.BROWSER_CDP_PUBLIC_URL : null,
+    url: activePage.url(),
+    profile: profileId,
+  }));
+});
+app.get("/v1/browser/screenshot", async (requestContext) => {
+  const image = await (await page(profile(requestContext.req.header("X-SlopBot-Profile")))).screenshot({ type: "png" });
   return new Response(new Uint8Array(image), {
     headers: { "cache-control": "no-store", "content-type": "image/png" },
   });
 });
 app.post("/v1/browser/page/navigate", async (requestContext) => {
   const input = NavigateSchema.parse(await requestContext.req.json());
-  await (await page()).goto(input.url, { waitUntil: "domcontentloaded" });
+  await (await page(profile(requestContext.req.header("X-SlopBot-Profile")))).goto(input.url, { waitUntil: "domcontentloaded" });
   return requestContext.json(ok(input.url));
 });
 app.get("/v1/browser/page/text", async (requestContext) =>
-  requestContext.json(ok(await (await page()).locator("body").innerText())),
+  requestContext.json(ok(await (await page(profile(requestContext.req.header("X-SlopBot-Profile")))).locator("body").innerText())),
 );
 app.post("/v1/browser/page/click", async (requestContext) => {
   const input = ClickSchema.parse(await requestContext.req.json());
-  const activePage = await page();
+  const activePage = await page(profile(requestContext.req.header("X-SlopBot-Profile")));
   if (input.selector) await activePage.locator(input.selector).click();
   else
     await activePage.mouse.click(input.x ?? 0, input.y ?? 0, {
@@ -142,23 +148,23 @@ app.post("/v1/browser/page/click", async (requestContext) => {
 });
 app.post("/v1/browser/page/fill", async (requestContext) => {
   const input = FillSchema.parse(await requestContext.req.json());
-  await (await page()).locator(input.selector).fill(input.text);
+  await (await page(profile(requestContext.req.header("X-SlopBot-Profile")))).locator(input.selector).fill(input.text);
   return requestContext.json(ok("filled"));
 });
 app.post("/v1/browser/page/evaluate", async (requestContext) => {
   const input = EvaluateSchema.parse(await requestContext.req.json());
-  return requestContext.json(ok(await (await page()).evaluate(input.expression)));
+  return requestContext.json(ok(await (await page(profile(requestContext.req.header("X-SlopBot-Profile")))).evaluate(input.expression)));
 });
 app.post("/v1/browser/page/scroll", async (requestContext) => {
   const input = ScrollSchema.parse(await requestContext.req.json());
   const horizontal = input.direction === "left" || input.direction === "right";
   const sign = input.direction === "up" || input.direction === "left" ? -1 : 1;
-  await (await page()).mouse.wheel(horizontal ? sign * input.amount : 0, horizontal ? 0 : sign * input.amount);
+  await (await page(profile(requestContext.req.header("X-SlopBot-Profile")))).mouse.wheel(horizontal ? sign * input.amount : 0, horizontal ? 0 : sign * input.amount);
   return requestContext.json(ok("scrolled"));
 });
 app.post("/v1/browser/page/press_key", async (requestContext) => {
   const input = KeySchema.parse(await requestContext.req.json());
-  await (await page()).keyboard.press(input.key);
+  await (await page(profile(requestContext.req.header("X-SlopBot-Profile")))).keyboard.press(input.key);
   return requestContext.json(ok("pressed"));
 });
 

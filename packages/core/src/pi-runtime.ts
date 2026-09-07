@@ -90,7 +90,7 @@ export type ImageInput = Readonly<z.infer<typeof ImageInputSchema>>;
 export type TurnInput = Readonly<z.infer<typeof TurnInputSchema>>;
 export type DynamicTool = Readonly<z.infer<typeof DynamicToolSchema>>;
 export type ThreadOptions = Readonly<z.infer<typeof ThreadOptionsSchema>>;
-export type TurnStatus = "completed" | "failed";
+export type TurnStatus = "completed" | "failed" | "cancelled";
 export type PiRuntimeOptions = Readonly<z.infer<typeof PiRuntimeOptionsSchema>>;
 export type CreateSkillInput = Readonly<z.infer<typeof CreateSkillInputSchema>>;
 export type PiAuthState = Readonly<z.infer<typeof PiAuthStateSchema>>;
@@ -109,8 +109,10 @@ export class PiRuntime {
   onText: ((threadId: ThreadId, delta: string) => void) | undefined;
   onTurnComplete: ((threadId: ThreadId, status: TurnStatus) => void) | undefined;
   onToolCall: ((threadId: ThreadId, tool: string, input: unknown) => Promise<string | ImageAttachment>) | undefined;
+  onApprovalRequest: ((threadId: ThreadId, tool: string, input: unknown) => Promise<boolean>) | undefined;
   private readonly options: PiRuntimeOptions;
   private readonly sessions = new Map<ThreadId, ManagedSession>();
+  private readonly cancelledThreads = new Set<ThreadId>();
   private modelRuntime: ModelRuntime | undefined;
   private skillLoader: ResourceLoader | undefined;
 
@@ -271,7 +273,8 @@ export class PiRuntime {
     }).then(
       () => {
         if (preflightAccepted) {
-          this.onTurnComplete?.(parsedId, "completed");
+          const cancelled = this.cancelledThreads.delete(parsedId);
+          this.onTurnComplete?.(parsedId, cancelled ? "cancelled" : "completed");
         }
       },
       (error: unknown) => {
@@ -280,14 +283,35 @@ export class PiRuntime {
           resolveAccepted(false);
           return;
         }
-        this.onText?.(parsedId, `Error: ${errorMessage(error)}`);
-        this.onTurnComplete?.(parsedId, "failed");
+        const cancelled = this.cancelledThreads.delete(parsedId);
+        if (!cancelled) this.onText?.(parsedId, `Error: ${errorMessage(error)}`);
+        this.onTurnComplete?.(parsedId, cancelled ? "cancelled" : "failed");
       },
     );
     if (!await accepted) {
       throw new Error(preflightError === undefined ? "Pi rejected the prompt" : errorMessage(preflightError));
     }
     return turnId;
+  }
+
+  async steerTurn(threadId: ThreadId, input: readonly TurnInput[]): Promise<void> {
+    const parsedId = ThreadIdSchema.parse(threadId);
+    const managed = this.sessions.get(parsedId);
+    if (!managed?.session.isStreaming) throw new Error("The bot is not currently running");
+    const parsedInput = z.array(TurnInputSchema).min(1).parse(input);
+    const text = parsedInput.filter((item): item is TextInput => item.type === "text").map((item) => item.text).join("\n\n");
+    const images = parsedInput
+      .filter((item): item is ImageInput => item.type === "image")
+      .map(({ data, mimeType }) => ({ type: "image" as const, data, mimeType }));
+    await managed.session.prompt(text, { images, streamingBehavior: "steer" });
+  }
+
+  async cancelTurn(threadId: ThreadId): Promise<void> {
+    const parsedId = ThreadIdSchema.parse(threadId);
+    const managed = this.sessions.get(parsedId);
+    if (!managed?.session.isStreaming) return;
+    this.cancelledThreads.add(parsedId);
+    await managed.session.abort();
   }
 
   private async createSession(sessionManager: SessionManager, options: ThreadOptions): Promise<ThreadId> {
@@ -310,6 +334,12 @@ export class PiRuntime {
       tools: [...(options.sandbox === "read-only" ? ["read", "grep", "find", "ls"] : ["read", "bash", "edit", "write", "grep", "find", "ls"]), ...customTools.map((tool) => tool.name)],
       customTools,
     });
+    session.agent.beforeToolCall = async ({ toolCall, args }) => {
+      if (!this.onApprovalRequest) return undefined;
+      const approved = await this.onApprovalRequest(threadId, toolCall.name, args);
+      return approved ? undefined : { block: true, reason: "The user denied this action", terminate: true };
+    };
+    session.agent.toolExecution = "sequential";
     const unsubscribe = session.subscribe((event) => this.handleSessionEvent(threadId, event));
     this.discardThread(threadId);
     this.sessions.set(threadId, { session, unsubscribe });
@@ -353,5 +383,5 @@ export class PiRuntime {
 
 export type AgentRuntime = Pick<PiRuntime,
   "connect" | "close" | "listSkills" | "createSkill" | "discardThread" | "startThread" | "resumeThread" |
-  "threadContainsText" | "startTurn" | "onToolCall" | "onText" | "onTurnComplete"
+  "threadContainsText" | "startTurn" | "steerTurn" | "cancelTurn" | "onToolCall" | "onApprovalRequest" | "onText" | "onTurnComplete"
 >;

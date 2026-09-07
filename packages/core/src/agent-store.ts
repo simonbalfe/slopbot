@@ -412,6 +412,24 @@ export class AgentStore {
     return message;
   }
 
+  addUserMessage(agentId: AgentId, text: string, images: readonly ImageAttachment[]): AgentMessage {
+    const message = AgentMessageSchema.parse({
+      id: randomUUID(),
+      agentId,
+      messageId: null,
+      role: "user",
+      direction: "inbound",
+      text,
+      images,
+      senderId: null,
+      recipientId: agentId,
+      createdAt: new Date().toISOString(),
+      status: null,
+    });
+    this.insertEvent(message);
+    return message;
+  }
+
   updateMessageText(messageId: string, text: string): void {
     this.database.query("UPDATE transcript_events SET text = ? WHERE id = ?").run(text, messageId);
   }

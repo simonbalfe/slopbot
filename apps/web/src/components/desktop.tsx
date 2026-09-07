@@ -66,7 +66,7 @@ export function Desktop({ agent }: Readonly<{ agent: Agent }>): React.ReactNode 
       className={`flex min-h-0 flex-col border-l border-line bg-panel p-4 ${expanded ? "fixed inset-0 z-10 border-l-0" : ""}`}
     >
       <div className="pb-2 text-[11px] font-semibold tracking-[.08em] text-muted-foreground">
-        LIVE DESKTOP
+        BOT BROWSER
       </div>
       {agent.desktop ? (
         <img
@@ -102,7 +102,7 @@ export function Desktop({ agent }: Readonly<{ agent: Agent }>): React.ReactNode 
         </div>
       )}
       <div className="flex items-center justify-between pt-2 text-xs text-muted-foreground">
-        <span>{agent.desktop ? `${agent.name} desktop` : "No computer"}</span>
+        <span>{agent.desktop ? `${agent.name} profile` : "No computer"}</span>
         <span className="flex gap-3">
           {agent.desktop?.viewerUrl && (
             <a
@@ -111,7 +111,7 @@ export function Desktop({ agent }: Readonly<{ agent: Agent }>): React.ReactNode 
               rel="noreferrer"
               className="text-zinc-100"
             >
-              Open login
+              Shared desktop
             </a>
           )}
           {agent.desktop && (

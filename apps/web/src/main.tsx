@@ -97,7 +97,13 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
+function Chat({
+  agent,
+  resolveApproval,
+}: Readonly<{
+  agent: Agent;
+  resolveApproval: (approved: boolean) => Promise<void>;
+}>): React.ReactNode {
   const scroll = useRef<HTMLElement>(null);
   useEffect(() => {
     if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
@@ -172,6 +178,28 @@ function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
           </span>
         </div>
       )}
+      {agent.approval && (
+        <section className="mt-5 rounded-2xl border border-amber-700/60 bg-amber-950/30 p-4">
+          <div className="text-[11px] font-semibold tracking-[.08em] text-amber-300">
+            APPROVAL NEEDED
+          </div>
+          <p className="mt-2 text-sm text-zinc-100">{agent.approval.summary}</p>
+          <div className="mt-3 flex gap-2">
+            <button
+              className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-zinc-900"
+              onClick={() => void resolveApproval(true)}
+            >
+              Allow once
+            </button>
+            <button
+              className="rounded-lg border border-line px-3 py-2 text-sm text-zinc-200"
+              onClick={() => void resolveApproval(false)}
+            >
+              Deny
+            </button>
+          </div>
+        </section>
+      )}
     </section>
   );
 }
@@ -214,14 +242,40 @@ function App(): React.ReactNode {
 
   const send = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
-    if (!agent || (!prompt.trim() && !images.length) || agent.status === "running")
+    if (!agent || (!prompt.trim() && !images.length))
       return;
     const text = prompt.trim();
     setComposerError("");
     try {
-      await api.agents.send({ agentId: agent.id, text, images: [...images] });
+      if (agent.status === "running")
+        await api.agents.redirect({ agentId: agent.id, text, images: [...images] });
+      else await api.agents.send({ agentId: agent.id, text, images: [...images] });
       setPrompt("");
       setImages([]);
+      await refresh();
+    } catch (error) {
+      setComposerError(errorText(error));
+    }
+  };
+  const stop = async (): Promise<void> => {
+    if (!agent) return;
+    setComposerError("");
+    try {
+      await api.agents.stop({ agentId: agent.id });
+      await refresh();
+    } catch (error) {
+      setComposerError(errorText(error));
+    }
+  };
+  const resolveApproval = async (approved: boolean): Promise<void> => {
+    if (!agent?.approval) return;
+    setComposerError("");
+    try {
+      await api.agents.resolveApproval({
+        agentId: agent.id,
+        approvalId: agent.approval.id,
+        approved,
+      });
       await refresh();
     } catch (error) {
       setComposerError(errorText(error));
@@ -365,14 +419,21 @@ function App(): React.ReactNode {
               </div>
             </div>
           </div>
-          <button
-            className="text-xs text-muted-foreground hover:text-zinc-100"
-            onClick={() => settings.current?.showModal()}
-          >
-            Settings
-          </button>
+          <div className="flex items-center gap-4">
+            {agent.status === "running" && (
+              <button className="text-xs text-red-300 hover:text-red-200" onClick={() => void stop()}>
+                Stop
+              </button>
+            )}
+            <button
+              className="text-xs text-muted-foreground hover:text-zinc-100"
+              onClick={() => settings.current?.showModal()}
+            >
+              Settings
+            </button>
+          </div>
         </header>
-        <Chat agent={agent} />
+        <Chat agent={agent} resolveApproval={resolveApproval} />
         <form className="border-t border-line p-4" onSubmit={send}>
           {images.length > 0 && (
             <div className="mb-2 flex gap-2 overflow-auto">
@@ -413,11 +474,9 @@ function App(): React.ReactNode {
             <button
               type="submit"
               className="h-auto rounded-xl bg-brand px-4 font-semibold text-zinc-900 disabled:opacity-40"
-              disabled={
-                agent.status === "running" || (!prompt.trim() && !images.length)
-              }
+              disabled={!prompt.trim() && !images.length}
             >
-              Send
+              {agent.status === "running" ? "Redirect" : "Send"}
             </button>
           </div>
         </form>

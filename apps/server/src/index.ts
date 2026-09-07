@@ -28,8 +28,18 @@ const SendMessageSchema = AgentIdSchema.extend({
 }).refine(({ text, images }) => Boolean(text || images.length), {
   message: "A message or image is required",
 });
+const RedirectMessageSchema = AgentIdSchema.extend({
+  text: z.string().trim().max(8_000).default(""),
+  images: ImageAttachmentsSchema.default([]),
+}).refine(({ text, images }) => Boolean(text || images.length), {
+  message: "A message or image is required",
+});
 const AgentBrowserInputSchema = AgentIdSchema.extend({
   input: BrowserInputSchema,
+});
+const ApprovalDecisionSchema = AgentIdSchema.extend({
+  approvalId: z.uuid(),
+  approved: z.boolean(),
 });
 
 const config = loadConfig();
@@ -77,6 +87,15 @@ export const appRouter = {
           input.images,
         ),
       ),
+    redirect: os
+      .input(RedirectMessageSchema)
+      .handler(({ input }) => agents.redirectAgent(input.agentId, input.text, input.images)),
+    stop: os
+      .input(AgentIdSchema)
+      .handler(({ input }) => agents.stopAgent(input.agentId)),
+    resolveApproval: os
+      .input(ApprovalDecisionSchema)
+      .handler(({ input }) => agents.resolveApproval(input.agentId, input.approvalId, input.approved)),
     clear: os
       .input(AgentIdSchema)
       .handler(({ input }) => agents.clearChat(input.agentId)),

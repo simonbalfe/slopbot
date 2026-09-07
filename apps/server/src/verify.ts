@@ -46,14 +46,24 @@ assert.ok(!stripVTControlCharacters(markdown.render(36).join("\n")).includes("**
 
 class CheckRuntime implements AgentRuntime {
   onToolCall: AgentRuntime["onToolCall"];
+  onApprovalRequest: AgentRuntime["onApprovalRequest"];
   onText: AgentRuntime["onText"];
   onTurnComplete: AgentRuntime["onTurnComplete"];
   async createSkill(_input: CreateSkillInput): Promise<Skill> { throw new Error("Skill creation is not exercised by this fake"); }
-  discardThread(id: ThreadId): void { this.optionsByThread.delete(id); }
+  private readonly timers = new Map<ThreadId, ReturnType<typeof setTimeout>>();
+  discardThread(id: ThreadId): void {
+    const timer = this.timers.get(id);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(id);
+    this.optionsByThread.delete(id);
+  }
   async threadContainsText(): Promise<boolean> { return false; }
   readonly optionsByThread = new Map<ThreadId, ThreadOptions>();
   async connect(): Promise<void> {}
-  close(): void {}
+  close(): void {
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    this.timers.clear();
+  }
   async listSkills(): Promise<readonly Skill[]> { return []; }
   async startThread(options: ThreadOptions): Promise<ThreadId> {
     const id = ThreadIdSchema.parse(crypto.randomUUID());
@@ -64,8 +74,22 @@ class CheckRuntime implements AgentRuntime {
     this.optionsByThread.set(id, options);
     return id;
   }
+  async steerTurn(id: ThreadId, input: readonly TurnInput[]): Promise<void> {
+    const text = input.find((item) => item.type === "text")?.text ?? "";
+    this.onText?.(id, `Redirected: ${text}`);
+  }
+  async cancelTurn(id: ThreadId): Promise<void> {
+    const timer = this.timers.get(id);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(id);
+    this.onTurnComplete?.(id, "cancelled");
+  }
   async startTurn(id: ThreadId, input: readonly TurnInput[]): Promise<TurnId> {
     const text = input.find((item) => item.type === "text")?.text ?? "";
+    if (text.includes("approval verification")) {
+      const approved = await this.onApprovalRequest?.(id, "bash", { command: "publish release" });
+      this.onText?.(id, approved ? "Approved action ran" : "Action was denied");
+    }
     const tools = this.optionsByThread.get(id)?.dynamicTools?.map((tool) => tool.name) ?? [];
     if (tools.includes("browser")) {
       await this.onToolCall?.(id, "browser", { action: "navigate", url: "https://example.com" });
@@ -79,10 +103,12 @@ class CheckRuntime implements AgentRuntime {
       await this.onToolCall?.(id, "send_to_agent", { target: "worker", message: "Verify the durable handoff" });
     if (text.includes("SlopBot request"))
       await this.onToolCall?.(id, "send_to_agent", { target: "lead", message: "Worker verified the handoff" });
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      this.timers.delete(id);
       this.onText?.(id, text.includes("SlopBot request") ? "Worker completed request" : text.includes("SlopBot result") ? "Lead received worker result" : "Verified browser response");
       this.onTurnComplete?.(id, "completed");
-    }, 20);
+    }, text.includes("long running verification") ? 500 : 20);
+    this.timers.set(id, timer);
     return TurnIdSchema.parse(crypto.randomUUID());
   }
 }
@@ -93,8 +119,10 @@ relay.onError((error, context) => context.json({ error: error.message }, error i
 const relayServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: relay.fetch });
 const databasePath = join(directory, "bot.sqlite");
 const requests: string[] = [];
+const browserProfiles: string[] = [];
 const browser = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async (request) => {
   requests.push(new URL(request.url).pathname);
+  browserProfiles.push(request.headers.get("X-SlopBot-Profile") ?? "");
   if (new URL(request.url).pathname === "/v1/desktop") {
     const input = z.object({ action: z.string() }).parse(await request.json());
     if (input.action === "screenshot") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV1cAAAAASUVORK5CYII=", "base64"), { headers: { "content-type": "image/png" } });
@@ -163,6 +191,7 @@ try {
   assert.match(runtime.optionsByThread.get(thread ?? lead.threadId)?.developerInstructions ?? "", /Be concise\./);
   assert.ok(requests.includes("/v1/browser/page/navigate"));
   assert.ok(requests.includes("/v1/desktop"));
+  assert.ok(browserProfiles.includes("lead"));
   controller.sendMessage("lead", "delegate verification");
   for (let attempt = 0; attempt < 100; attempt++) {
     if (controller.listAgents().find((item) => item.id === "lead")?.messages.some((message) => message.text === "Worker verified the handoff")) break;
@@ -171,12 +200,38 @@ try {
   const communicated = controller.listAgents();
   assert.ok(communicated.find((item) => item.id === "worker")?.messages.some((message) => message.text === "Verify the durable handoff" && message.direction === "inbound"));
   assert.ok(communicated.find((item) => item.id === "lead")?.messages.some((message) => message.text === "Worker verified the handoff" && message.direction === "inbound"));
+  assert.ok(browserProfiles.includes("worker"));
   for (let attempt = 0; attempt < 100; attempt++) {
     const current = controller.listAgents();
     if (current.every((item) => item.status === "idle") && current.find((item) => item.id === "lead")?.messages.some((message) => message.text === "Lead received worker result")) break;
     await Bun.sleep(20);
   }
   assert.ok(controller.listAgents().every((item) => item.status === "idle"));
+  controller.sendMessage("lead", "approval verification");
+  for (let attempt = 0; attempt < 100 && !controller.listAgents()[0]?.approval; attempt++) await Bun.sleep(10);
+  const approval = controller.listAgents()[0]?.approval;
+  assert.ok(approval);
+  assert.equal(approval.tool, "bash");
+  assert.match(approval.summary, /publish release/);
+  controller.resolveApproval("lead", approval.id, true);
+  for (let attempt = 0; attempt < 100 && controller.listAgents()[0]?.status !== "idle"; attempt++) await Bun.sleep(10);
+  assert.ok(controller.listAgents()[0]?.messages.some((message) => message.text.includes("Approved action ran")));
+
+  controller.sendMessage("lead", "approval verification denied");
+  for (let attempt = 0; attempt < 100 && !controller.listAgents()[0]?.approval; attempt++) await Bun.sleep(10);
+  const denied = controller.listAgents()[0]?.approval;
+  assert.ok(denied);
+  controller.resolveApproval("lead", denied.id, false);
+  for (let attempt = 0; attempt < 100 && controller.listAgents()[0]?.status !== "idle"; attempt++) await Bun.sleep(10);
+  assert.ok(controller.listAgents()[0]?.messages.some((message) => message.text.includes("Action was denied")));
+
+  controller.sendMessage("lead", "long running verification");
+  for (let attempt = 0; attempt < 100 && controller.listAgents()[0]?.status !== "running"; attempt++) await Bun.sleep(10);
+  await controller.redirectAgent("lead", "Use the new direction");
+  assert.ok(controller.listAgents()[0]?.messages.some((message) => message.role === "user" && message.text === "Use the new direction"));
+  await controller.stopAgent("lead");
+  assert.equal(controller.listAgents()[0]?.status, "idle");
+  assert.ok(controller.listAgents()[0]?.messages.some((message) => message.text === "Stopped by user."));
   const created = await controller.createAgent({ id: createAgentId("critic"), name: "CRITIC", role: "Reviews work", instructions: "Review teammate results" });
   assert.equal(created.id, "critic");
   assert.equal(controller.listAgents().length, 3);
@@ -194,7 +249,7 @@ try {
   const stored = new AgentStore(databasePath);
   assert.ok(stored.getAgent(createAgentId("worker")));
   stored.close();
-  console.log("Verified multi-bot messaging, SQLite configuration, session continuity, browser dispatch, and terminal chat.");
+  console.log("Verified multi-bot messaging, session continuity, separate browser routing, approvals, user control, and terminal chat.");
 } finally {
   controller.close();
   server?.stop(true);

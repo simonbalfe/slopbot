@@ -130,7 +130,7 @@ if (action === "open") {
       await run([lima, "start", "-y", "--name=slopbot", "--timeout=20m", config]);
     }
     const archive = join(temporary, "source.tar");
-    const sourceArchive = Bun.spawn(["tar", "--exclude=node_modules", "--exclude=.git", "--exclude=.env*", "--exclude=data", "--exclude=workspace", "--exclude=.slopbot", "--exclude=ui-dist", "--exclude=dist", "--exclude=.DS_Store", "-cf", archive, "-C", root, "."], {
+    const sourceArchive = Bun.spawn(["tar", ...(process.platform === "darwin" ? ["--no-xattrs"] : []), "--exclude=node_modules", "--exclude=.git", "--exclude=.env*", "--exclude=data", "--exclude=workspace", "--exclude=.slopbot", "--exclude=ui-dist", "--exclude=dist", "--exclude=.DS_Store", "-cf", archive, "-C", root, "."], {
       cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit", env: { ...process.env, COPYFILE_DISABLE: "1" },
     });
     if (await sourceArchive.exited !== 0) throw new Error("Could not package the computer service");

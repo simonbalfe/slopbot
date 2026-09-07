@@ -40,9 +40,11 @@ function responseText(value: unknown): string {
 export class SandboxBrowser {
   private readonly apiKey: string | undefined;
   private readonly endpoint: string;
+  private readonly profile: string;
 
-  constructor(baseUrl: string, apiKey?: string) {
+  constructor(baseUrl: string, profile: string, apiKey?: string) {
     this.endpoint = z.url().parse(baseUrl).replace(/\/$/, "");
+    this.profile = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).parse(profile);
     this.apiKey = apiKey;
   }
 
@@ -74,10 +76,8 @@ export class SandboxBrowser {
   }
 
   async screenshot(): Promise<Uint8Array> {
-    const response = await fetch(`${this.endpoint}/v1/desktop`, {
-      method: "POST",
-      headers: { ...this.headers(), "content-type": "application/json" },
-      body: JSON.stringify({ action: "screenshot" }),
+    const response = await fetch(`${this.endpoint}/v1/browser/screenshot`, {
+      headers: this.headers(),
       signal: AbortSignal.timeout(60_000),
     });
     if (!response.ok)
@@ -88,7 +88,14 @@ export class SandboxBrowser {
   async computer(input: ComputerArguments): Promise<string | ImageAttachment> {
     const parsed = ComputerArgumentsSchema.parse(input);
     if (parsed.action === "screenshot") {
-      return { data: Buffer.from(await this.screenshot()).toString("base64"), mimeType: "image/png" };
+      const response = await fetch(`${this.endpoint}/v1/desktop`, {
+        method: "POST",
+        headers: { ...this.headers(), "content-type": "application/json" },
+        body: JSON.stringify(parsed),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!response.ok) throw new Error(`Desktop screenshot failed: ${response.status}`);
+      return { data: Buffer.from(await response.arrayBuffer()).toString("base64"), mimeType: "image/png" };
     }
     await this.request("/v1/desktop", parsed);
     return "Done";
@@ -97,20 +104,18 @@ export class SandboxBrowser {
   async input(input: BrowserInput): Promise<void> {
     switch (input.type) {
       case "click":
-        await this.computer({
-          action: "click",
+        await this.request("/v1/browser/page/click", {
           x: input.x,
           y: input.y,
           button: input.button,
-          clickCount: input.clickCount,
+          click_count: input.clickCount,
         });
         return;
       case "scroll": {
         const vertical = Math.abs(input.deltaY) >= Math.abs(input.deltaX);
         const delta = vertical ? input.deltaY : input.deltaX;
         if (delta === 0) return;
-        await this.computer({
-          action: "scroll",
+        await this.request("/v1/browser/page/scroll", {
           direction: vertical
             ? delta < 0
               ? "up"
@@ -123,12 +128,15 @@ export class SandboxBrowser {
         return;
       }
       case "key":
-        await this.computer({ action: "key", key: input.key.split("+").map((key) => ({ Enter: "Return", Backspace: "BackSpace", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Control: "ctrl", Meta: "super" })[key] ?? key).join("+") });
+        await this.request("/v1/browser/page/press_key", { key: input.key });
     }
   }
 
   private headers(): HeadersInit {
-    return this.apiKey ? { "X-AIO-API-Key": this.apiKey } : {};
+    return {
+      "X-SlopBot-Profile": this.profile,
+      ...(this.apiKey ? { "X-AIO-API-Key": this.apiKey } : {}),
+    };
   }
 
   private async request(path: string, body?: unknown): Promise<unknown> {

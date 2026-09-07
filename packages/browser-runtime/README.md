@@ -2,7 +2,7 @@
 
 The service runs Chromium, Openbox, and shell/file tool implementations inside SlopBot's Linux VM. Pi's model runtime runs separately and calls this service over HTTP. Follow the [local setup](../../README.md#run-locally) and [computer interface](../../docs/computer-api.md).
 
-View the desktop at <http://127.0.0.1:6080/vnc/vnc.html>. Browser logins persist in `/data/browser`; downloads go to `/workspace/Downloads`. The service binds to guest localhost and Lima forwards the HTTP viewer and CDP port `9222` to host localhost.
+View the shared desktop at <http://127.0.0.1:6080/vnc/vnc.html>. Each bot sends its stable ID in `X-SlopBot-Profile` and receives a persistent Chromium profile. The lead profile remains in `/data/browser`; additional profiles live under `/data/browser-profiles`. Downloads are separated under `/workspace/Downloads/<bot-id>`. The service binds to guest localhost and Lima forwards the HTTP viewer and the lead profile's CDP port `9222` to host localhost.
 
 ## API
 
@@ -24,4 +24,4 @@ View the desktop at <http://127.0.0.1:6080/vnc/vnc.html>. Browser logins persist
 
 Desktop requests follow [computer.ts](../contracts/src/computer.ts). Screenshots return PNG bytes; other operations return `{success, data}`. Coordinates use the 1280×1024 screen. Keys use X11 names such as `Return`, `ctrl+l`, and `alt+F2`. `type` inserts literal text. SlopBot's `computer` tool returns screenshots as images to Pi; its `browser` tool retains selector-based page operations.
 
-`LISTEN_HOST` controls the bind address. If `SANDBOX_API_KEY` is set, `/v1/*` requires the matching `X-AIO-API-Key` header. This does not protect noVNC or raw CDP, which must remain private.
+`LISTEN_HOST` controls the bind address. Browser routes select the `lead` profile when `X-SlopBot-Profile` is absent. If `SANDBOX_API_KEY` is set, `/v1/*` requires the matching `X-AIO-API-Key` header. This does not protect noVNC or raw CDP, which must remain private.
