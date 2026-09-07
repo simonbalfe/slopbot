@@ -4,6 +4,10 @@ import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "../../..");
 if (process.argv[2] === "uninstall") {
+  const stop = Bun.spawn([process.execPath, join(root, "apps/server/src/service.ts"), "stop"], {
+    cwd: root, stdin: "inherit", stdout: "ignore", stderr: "ignore",
+  });
+  await stop.exited;
   const uninstall = Bun.spawn(["sh", join(root, "uninstall.sh"), ...process.argv.slice(3)], {
     cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit",
   });

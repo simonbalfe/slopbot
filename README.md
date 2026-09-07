@@ -11,7 +11,7 @@ flowchart LR
   SlopBot --> Worker["WORKER<br/>private Pi session"]
   Lead <--> Mailroom[(durable messages)]
   Worker <--> Mailroom
-  Lead --> Computer["shared Lima VM<br/>Chromium + desktop"]
+  Lead --> Computer["shared Linux VM<br/>Chromium + desktop"]
   Worker --> Computer
 ```
 
@@ -25,24 +25,24 @@ flowchart LR
 
 ## Install
 
-On macOS:
+On macOS or Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/simonbalfe/slopbot/main/install.sh | sh
 slopbot
 ```
 
-The installer builds SlopBot and prepares its Linux computer. Git and Homebrew are required. Existing installation directories are preserved.
+The installer downloads SlopBot and installs missing runtime dependencies into user-owned directories, including Bun and a pinned Lima release. It detects the operating system and CPU architecture and does not require Homebrew or Git. On Linux, it installs QEMU through the available system package manager when QEMU is missing. Existing installation directories are preserved.
 
 Open the web interface at <http://127.0.0.1:4317>. The first run asks you to connect a ChatGPT Plus or Pro account.
 
 ## How the computer works
 
-SlopBot runs as a normal macOS process. Lima uses Apple's native virtualization framework to manage a lightweight Debian virtual machine. SlopBot uses this VM to give every bot a shared Linux computer with Chromium, a desktop, and persistent browser state. You can view and control the same desktop at <http://127.0.0.1:6080/vnc/vnc.html>.
+SlopBot runs as a native process on macOS or Linux. Lima manages a lightweight Debian virtual machine using the host's supported virtualization system. SlopBot uses this VM to give every bot a shared Linux computer with Chromium, a desktop, and persistent browser state. You can view and control the same desktop at <http://127.0.0.1:6080/vnc/vnc.html>.
 
-The VM mounts `~/workspace` at `/workspace`. Bot configuration, messages, model authentication, and Pi sessions remain on the Mac. Browser logins remain inside the VM.
+The VM mounts `~/workspace` at `/workspace` by default. Set `SLOPBOT_WORKSPACE_PATH` before installation to choose another directory. Bot configuration, messages, model authentication, and Pi sessions remain on the host. Browser logins remain inside the VM.
 
-Docker provides an optional portable package for the SlopBot runtime. Lima provides the local Linux computer.
+Docker provides optional packaging for the SlopBot runtime. Lima provides the same local Linux computer contract on macOS and Linux.
 
 ## Development
 

@@ -1,22 +1,14 @@
 #!/bin/sh
 set -eu
 
-if [ "$(uname -s)" != Darwin ]; then
-  echo 'The installer currently supports macOS. Other Bun hosts can run bun run start:server from a checkout.' >&2
-  exit 1
-fi
+case $(uname -s) in
+  Darwin|Linux) ;;
+  *) echo 'SlopBot currently supports macOS and Linux.' >&2; exit 1;;
+esac
 
-command -v git >/dev/null 2>&1 || { echo 'Install Git first: xcode-select --install' >&2; exit 1; }
-if [ "${SLOPBOT_SKIP_COMPUTER:-0}" != 1 ] \
-  && ! command -v limactl >/dev/null 2>&1 \
-  && [ ! -x /opt/homebrew/bin/limactl ] \
-  && [ ! -x /usr/local/bin/limactl ] \
-  && ! command -v brew >/dev/null 2>&1 \
-  && [ ! -x /opt/homebrew/bin/brew ] \
-  && [ ! -x /usr/local/bin/brew ]; then
-  echo 'Homebrew is required to install the SlopBot computer. Install it from https://brew.sh or set SLOPBOT_SKIP_COMPUTER=1.' >&2
-  exit 1
-fi
+command -v curl >/dev/null 2>&1 || { echo 'The curl command is required to download SlopBot.' >&2; exit 1; }
+command -v tar >/dev/null 2>&1 || { echo 'The tar command is required to unpack SlopBot.' >&2; exit 1; }
+command -v bash >/dev/null 2>&1 || { echo 'The bash command is required to install Bun.' >&2; exit 1; }
 if ! command -v bun >/dev/null 2>&1 && [ ! -x "$HOME/.bun/bin/bun" ]; then
   installer=$(mktemp)
   trap 'rm -f "$installer"' EXIT HUP INT TERM
@@ -38,7 +30,14 @@ else
     echo "Destination already exists: $install_dir. Run its install.sh or choose SLOPBOT_INSTALL_DIR." >&2
     exit 1
   fi
-  git clone https://github.com/simonbalfe/slopbot.git "$install_dir"
+  download_dir=$(mktemp -d)
+  trap 'rm -rf "$download_dir"' EXIT HUP INT TERM
+  curl -fsSL https://github.com/simonbalfe/slopbot/archive/refs/heads/main.tar.gz -o "$download_dir/slopbot.tar.gz"
+  tar -xzf "$download_dir/slopbot.tar.gz" -C "$download_dir"
+  mkdir -p "$(dirname "$install_dir")"
+  mv "$download_dir/slopbot-main" "$install_dir"
+  rm -rf "$download_dir"
+  trap - EXIT HUP INT TERM
   managed_install=1
 fi
 cd "$install_dir"
@@ -46,7 +45,8 @@ cd "$install_dir"
 "$bun_bin" run build
 bin_dir=${SLOPBOT_BIN_DIR:-"$HOME/.local/bin"}
 data_dir=${SLOPBOT_DATA_DIR:-"$HOME/.local/share/slopbot-data"}
-mkdir -p "$bin_dir" "$HOME/workspace"
+workspace_dir=${SLOPBOT_WORKSPACE_PATH:-"$HOME/workspace"}
+mkdir -p "$bin_dir" "$workspace_dir"
 if [ "$managed_install" -eq 1 ]; then touch "$install_dir/.slopbot-managed-install"; fi
 quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 {
@@ -54,7 +54,10 @@ quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
   quote "$bin_dir/slopbot"
   printf '\nexport SLOPBOT_BIN_PATH\nif [ -z "${SLOPBOT_DATA_DIR:-}" ]; then SLOPBOT_DATA_DIR='
   quote "$data_dir"
-  printf '; export SLOPBOT_DATA_DIR; fi\ncd '
+  printf '; export SLOPBOT_DATA_DIR; fi\n'
+  printf 'if [ -z "${SLOPBOT_WORKSPACE:-}" ]; then SLOPBOT_WORKSPACE='
+  quote "$workspace_dir"
+  printf '; export SLOPBOT_WORKSPACE; fi\nif [ -z "${SLOPBOT_WORKSPACE_PATH:-}" ]; then SLOPBOT_WORKSPACE_PATH="$SLOPBOT_WORKSPACE"; export SLOPBOT_WORKSPACE_PATH; fi\ncd '
   quote "$install_dir"
   printf ' || exit\nexec '
   quote "$bun_bin"
@@ -63,7 +66,7 @@ quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 chmod 755 "$bin_dir/slopbot"
 if [ "${SLOPBOT_SKIP_COMPUTER:-0}" != 1 ]; then
   printf '\nSetting up the SlopBot computer VM…\n'
-  "$bun_bin" vm/manage.ts setup
+  SLOPBOT_DATA_DIR="$data_dir" SLOPBOT_WORKSPACE_PATH="$workspace_dir" "$bun_bin" vm/manage.ts setup
 fi
 printf '\nInstalled SlopBot. Run: %s/slopbot\n' "$bin_dir"
 case ":$PATH:" in
