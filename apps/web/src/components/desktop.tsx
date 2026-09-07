@@ -111,7 +111,7 @@ export function Desktop({ agent }: Readonly<{ agent: Agent }>): React.ReactNode 
               rel="noreferrer"
               className="text-zinc-100"
             >
-              Shared desktop
+              Open desktop
             </a>
           )}
           {agent.desktop && (

@@ -37,7 +37,7 @@ export class SandboxComputer {
       computerId: "slopbot-browser",
       screen,
       browserProfile: agentId,
-      viewerUrl: `${publicUrl.replace(/\/$/, "")}/vnc/vnc.html`,
+      viewerUrl: `${publicUrl.replace(/\/$/, "")}/vnc/vnc.html?profile=${encodeURIComponent(agentId)}`,
     });
   }
 

@@ -41,12 +41,12 @@ export function startCdpProxy(hostname: string, port: number, upstreamPort: numb
 
 }
 
-export type VncPeer = { socket?: Bun.Socket<VncPeer> };
+export type VncPeer = { port: number; socket?: Bun.Socket<VncPeer> };
 export const vncWebSocket: Bun.WebSocketHandler<VncPeer> = {
   open(webSocket) {
     void Bun.connect<VncPeer>({
       hostname: "127.0.0.1",
-      port: 5900,
+      port: webSocket.data.port,
       socket: {
         open(socket) {
           webSocket.data.socket = socket;

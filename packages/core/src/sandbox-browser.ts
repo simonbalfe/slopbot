@@ -76,8 +76,10 @@ export class SandboxBrowser {
   }
 
   async screenshot(): Promise<Uint8Array> {
-    const response = await fetch(`${this.endpoint}/v1/browser/screenshot`, {
-      headers: this.headers(),
+    const response = await fetch(`${this.endpoint}/v1/desktop`, {
+      method: "POST",
+      headers: { ...this.headers(), "content-type": "application/json" },
+      body: JSON.stringify({ action: "screenshot" }),
       signal: AbortSignal.timeout(60_000),
     });
     if (!response.ok)

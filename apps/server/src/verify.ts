@@ -154,6 +154,14 @@ try {
   assert.ok(lead && worker);
   assert.deepEqual(runtime.optionsByThread.get(lead.threadId)?.dynamicTools?.map((tool) => tool.name), ["send_to_agent", "browser", "computer"]);
   assert.deepEqual(runtime.optionsByThread.get(worker.threadId)?.dynamicTools?.map((tool) => tool.name), ["send_to_agent", "browser", "computer"]);
+  assert.match(lead.desktop?.viewerUrl ?? "", /\?profile=lead$/);
+  assert.match(worker.desktop?.viewerUrl ?? "", /\?profile=worker$/);
+  await controller.browserScreenshot("lead");
+  assert.equal(requests.at(-1), "/v1/desktop");
+  assert.equal(browserProfiles.at(-1), "lead");
+  await controller.browserScreenshot("worker");
+  assert.equal(requests.at(-1), "/v1/desktop");
+  assert.equal(browserProfiles.at(-1), "worker");
   assert.ok(runtime.optionsByThread.get(lead.threadId)?.developerInstructions?.includes(`Your host workspace is ${directory}`));
   assert.ok(runtime.optionsByThread.get(lead.threadId)?.developerInstructions?.includes("WORKER (worker)"));
   const thread = controller.listAgents()[0]?.threadId;

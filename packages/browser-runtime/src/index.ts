@@ -45,7 +45,6 @@ const KeySchema = z.object({ key: z.string().min(1).max(100) });
 const ProfileSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).default("lead");
 
 const env = EnvSchema.parse(process.env);
-process.env["DISPLAY"] = env.DISPLAY;
 
 const desktop = await startDesktop(env);
 
@@ -74,12 +73,13 @@ app.use("/v1/*", async (requestContext, next) => {
 app.get("/health", (requestContext) => requestContext.json(ok({ ready: true, browserProfiles: desktop.profileCount() })));
 app.route("/v1/tools", toolRelay(env.BROWSER_WORKSPACE));
 app.post("/v1/desktop", async (requestContext) => {
+  const profileId = profile(requestContext.req.header("X-SlopBot-Profile"));
   const input = ComputerArgumentsSchema.parse(await requestContext.req.json());
   if (input.action === "screenshot") {
     const directory = mkdtempSync(join(tmpdir(), "slopbot-screen-"));
     try {
       const filename = join(directory, "screen.png");
-      await desktopCommand(["scrot", "--overwrite", filename]);
+      await desktop.command(profileId, ["scrot", "--overwrite", filename]);
       return new Response(await Bun.file(filename).arrayBuffer(), {
         headers: { "cache-control": "no-store", "content-type": "image/png" },
       });
@@ -87,29 +87,21 @@ app.post("/v1/desktop", async (requestContext) => {
   }
   switch (input.action) {
     case "click":
-      await desktopCommand(["xdotool", "mousemove", "--sync", String(input.x), String(input.y), "click", "--repeat", String(input.clickCount), String({ left: 1, middle: 2, right: 3 }[input.button])]);
+      await desktop.command(profileId, ["xdotool", "mousemove", "--sync", String(input.x), String(input.y), "click", "--repeat", String(input.clickCount), String({ left: 1, middle: 2, right: 3 }[input.button])]);
       break;
     case "type":
-      await desktopCommand(["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", input.text]);
+      await desktop.command(profileId, ["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", input.text]);
       break;
     case "key":
-      await desktopCommand(["xdotool", "key", "--clearmodifiers", input.key]);
+      await desktop.command(profileId, ["xdotool", "key", "--clearmodifiers", input.key]);
       break;
     case "scroll":
-      await desktopCommand(["xdotool", "click", "--repeat", String(input.amount), String({ up: 4, down: 5, left: 6, right: 7 }[input.direction])]);
+      await desktop.command(profileId, ["xdotool", "click", "--repeat", String(input.amount), String({ up: 4, down: 5, left: 6, right: 7 }[input.direction])]);
       break;
   }
   return requestContext.json(ok("done"));
 });
 
-async function desktopCommand(args: string[]): Promise<void> {
-  const child = Bun.spawn(args, { stdout: "ignore", stderr: "pipe" });
-  const timer = globalThis.setTimeout(() => child.kill(), 15_000);
-  try {
-    const error = await new Response(child.stderr).text();
-    if (await child.exited !== 0) throw new Error(`${args[0]} failed: ${error}`);
-  } finally { clearTimeout(timer); }
-}
 app.get("/v1/browser/info", async (requestContext) => {
   const profileId = profile(requestContext.req.header("X-SlopBot-Profile"));
   const activePage = await page(profileId);
@@ -186,10 +178,13 @@ app.onError((error, requestContext) =>
 const server = Bun.serve<VncPeer>({
   port: env.PORT,
   hostname: env.LISTEN_HOST,
-  fetch(request, bunServer) {
+  async fetch(request, bunServer) {
     if (new URL(request.url).pathname === "/v1/tools") bunServer.timeout(request, 0);
-    if (new URL(request.url).pathname === "/websockify" && bunServer.upgrade(request, { data: {} }))
-      return undefined;
+    if (new URL(request.url).pathname === "/websockify") {
+      const profileId = profile(new URL(request.url).searchParams.get("profile") ?? undefined);
+      await desktop.context(profileId);
+      if (bunServer.upgrade(request, { data: { port: desktop.vncPort(profileId) } })) return undefined;
+    }
     return app.fetch(request);
   },
   websocket: vncWebSocket,

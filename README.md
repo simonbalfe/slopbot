@@ -11,10 +11,10 @@ flowchart LR
   SlopBot --> Worker["WORKER<br/>private Pi session"]
   Lead <--> Mailroom[(durable messages)]
   Worker <--> Mailroom
-  Lead --> Computer["shared Linux VM<br/>Chromium + desktop"]
+  Lead --> Computer["shared Linux VM"]
   Worker --> Computer
-  Computer --> LeadProfile["lead browser profile"]
-  Computer --> WorkerProfile["worker browser profile"]
+  Computer --> LeadProfile["lead desktop + browser profile"]
+  Computer --> WorkerProfile["worker desktop + browser profile"]
 ```
 
 ## Principles
@@ -41,7 +41,7 @@ Open the web interface at <http://127.0.0.1:4317>. The first run asks you to con
 
 ## How the computer works
 
-SlopBot runs as a native process on macOS or Linux. Lima manages a lightweight Debian virtual machine using the host's supported virtualization system. Every bot uses that same computer and keeps a separate persistent Chromium profile inside it. You can view and control the shared desktop at <http://127.0.0.1:6080/vnc/vnc.html>.
+SlopBot runs as a native process on macOS or Linux. Lima manages a lightweight Debian virtual machine using the host's supported virtualization system. Every bot uses that same computer and keeps a separate persistent desktop and Chromium profile inside it. The dashboard preview, bot screenshots, user input, and each bot's desktop link all target the same bot-specific display.
 
 The VM mounts `~/workspace` at `/workspace` by default. Set `SLOPBOT_WORKSPACE_PATH` before installation to choose another directory. Bot configuration, messages, model authentication, and Pi sessions remain on the host. Browser logins remain inside the VM.
 

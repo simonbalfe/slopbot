@@ -140,7 +140,7 @@ const browserTool = {
 const computerTool = {
   type: "function",
   name: "computer",
-  description: "Control the separate Linux VM desktop shared with the user. Take a screenshot before using pixel coordinates (1280x1024). Click, type literal text, scroll, or press X11 keys such as Return, ctrl+l, alt+F2. Launch VM apps through its desktop terminal or Run dialog, not the host bash tool. Screenshots return images.",
+  description: "Control your private desktop inside the team's Linux VM. Take a screenshot before using pixel coordinates (1280x1024). Click, type literal text, scroll, or press X11 keys such as Return, ctrl+l, alt+F2. Launch VM apps through its desktop terminal or Run dialog, not the host bash tool. Screenshots return images.",
   inputSchema: toolParameters(ComputerArgumentsSchema),
 } satisfies DynamicTool;
 
@@ -403,7 +403,7 @@ export class AgentController {
   ): string {
     const roster = this.teamDescription();
     const computer = desktop
-      ? " The browser and computer tools target the team's shared Linux VM, not the host. Other bots and the user can see and control the same desktop, so inspect its current state before acting. Its /workspace is a shared mount; normal bash runs on the host."
+      ? " The browser and computer tools target your assigned desktop inside the team's Linux VM, not the host. The dashboard and user see this same desktop; other bots have separate displays. Inspect its current state before acting. Its /workspace is a shared mount; normal bash runs on the host."
       : "";
     return `You are ${profile.name} with stable bot ID ${profile.id}. ${profile.role}. ${profile.instructions} The active SlopBot team is ${roster}. Your runtime runs on ${process.platform === "darwin" ? "macOS" : process.platform}. Your host workspace is ${this.options.cwd}. The read, write, edit, grep, find, ls, and bash tools operate locally on this host.${computer} Your transcript is private. Share only deliberate handoffs through send_to_agent. A send queues a durable message and immediately returns its ID; it does not return the recipient's answer. Do not poll, invent replies, or send receipt-only acknowledgements. Follow relevant skills and never claim an action succeeded without tool evidence.`;
   }

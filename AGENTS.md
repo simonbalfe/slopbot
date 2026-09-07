@@ -20,7 +20,7 @@ Read [`README.md`](README.md) first for the current architecture and local run c
 ## Architecture invariants
 
 - Run multiple persistent bots, each with a stable ID and private Pi session inside the SlopBot app process. Keep bot-to-bot handoffs durable, explicit, and visible in each transcript.
-- Give every bot access to the same computer VM. Add future browser isolation inside that shared VM as separate profiles or sessions.
+- Give every bot access to the same computer VM with its own X display and browser profile. Keep dashboard screenshots, computer input, and VNC scoped to that same bot-specific display.
 - SlopBot runs natively outside the computer by default; Compose is optional packaging. Its shell/file tools run on the runtime host; browser and desktop tools target the separate VM. Lima runs the computer executor and desktop only.
 - Keep runtime credentials and database outside the computer. Never mount the runtime repository or data into the VM; deploy filtered source archives.
 - Store bot configuration in SQLite and preserve Pi session history when configuration changes.
