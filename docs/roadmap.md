@@ -26,7 +26,7 @@ flowchart LR
 ## Working now
 
 - [x] Multiple persistent bots with separate identities and conversations.
-- [x] Bots can send durable messages and replies to each other.
+- [x] Bots can send durable messages when the user asks and return replies to each other.
 - [x] Messages recover after SlopBot restarts.
 - [x] Every bot uses the same Linux computer and keeps a separate synchronized desktop and browser profile.
 - [x] The installer sets up SlopBot and Lima on macOS and Linux.
@@ -48,7 +48,7 @@ flowchart LR
 
 - The user always has priority over internal bot work.
 - Each bot keeps its own identity and private conversation.
-- Bots share information deliberately through messages.
+- Bots start a handoff only when the user explicitly asks to involve a named teammate.
 - All bots use one shared VM, with a separate desktop and browser session for each bot.
 - SlopBot stores coordination state so work survives restarts.
 - The interface stays focused on bots, their work, and their results.

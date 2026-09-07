@@ -94,6 +94,7 @@ type ActiveMessage = {
 
 const messageRetryLimit = 3;
 const singleBotInstructions = "Handle the user's task directly. Inspect evidence, use your browser and tools when useful, preserve unrelated work, and report verified results.";
+const handoffRequest = /\b(?:ask|tell|message|send|delegate|handoff|hand\s+off|pass|forward|route|use|have|get)\b/i;
 
 export const defaultAgentProfiles = [
   {
@@ -102,7 +103,7 @@ export const defaultAgentProfiles = [
     aliases: ["lead", "manager", "slopbot"],
     role: "Coordinates work and owns the final answer",
     sandbox: "workspace-write",
-    instructions: "Own intake, delegation, and synthesis. Delegate useful execution to teammates and report only results they actually return.",
+    instructions: "Handle user requests yourself. Use send_to_agent only when the user explicitly asks you to involve a named teammate, then report the result that teammate returns.",
   },
   {
     id: createAgentId("worker"),
@@ -110,14 +111,14 @@ export const defaultAgentProfiles = [
     aliases: ["worker", "researcher", "builder", "reviewer", "ops"],
     role: "Researches, builds, reviews, and operates",
     sandbox: "workspace-write",
-    instructions: "Inspect the real flow, gather evidence, implement focused changes, and verify them. Preserve unrelated work and send material results and remaining risks to LEAD.",
+    instructions: "Inspect the real flow, gather evidence, implement focused changes, and verify them. Preserve unrelated work. Return requested handoff results to the bot that sent them; otherwise answer the user directly.",
   },
 ] satisfies readonly [AgentProfile, AgentProfile];
 
 const sendToAgentTool = {
   type: "function",
   name: "send_to_agent",
-  description: "Queue an asynchronous message to another SlopBot bot and return its stable message ID.",
+  description: "Queue an asynchronous message to another SlopBot bot only when the current user explicitly asked to involve that named bot. Replies to requested handoffs are allowed.",
   inputSchema: {
     type: "object",
     properties: {
@@ -146,6 +147,18 @@ const computerTool = {
 
 function normalizeAgentName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+agent$/, "");
+}
+
+function escapeRegularExpression(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function userRequestedHandoff(text: string, recipient: AgentProfile): boolean {
+  if (!handoffRequest.test(text)) return false;
+  return [recipient.id, recipient.name, ...recipient.aliases].some((name) => {
+    const escaped = escapeRegularExpression(normalizeAgentName(name));
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(text);
+  });
 }
 
 export class AgentController {
@@ -405,7 +418,7 @@ export class AgentController {
     const computer = desktop
       ? " The browser and computer tools target your assigned desktop inside the team's Linux VM, not the host. The dashboard and user see this same desktop; other bots have separate displays. Inspect its current state before acting. Its /workspace is a shared mount; normal bash runs on the host."
       : "";
-    return `You are ${profile.name} with stable bot ID ${profile.id}. ${profile.role}. ${profile.instructions} The active SlopBot team is ${roster}. Your runtime runs on ${process.platform === "darwin" ? "macOS" : process.platform}. Your host workspace is ${this.options.cwd}. The read, write, edit, grep, find, ls, and bash tools operate locally on this host.${computer} Your transcript is private. Share only deliberate handoffs through send_to_agent. A send queues a durable message and immediately returns its ID; it does not return the recipient's answer. Do not poll, invent replies, or send receipt-only acknowledgements. Follow relevant skills and never claim an action succeeded without tool evidence.`;
+    return `You are ${profile.name} with stable bot ID ${profile.id}. ${profile.role}. ${profile.instructions} The active SlopBot team is ${roster}. Your runtime runs on ${process.platform === "darwin" ? "macOS" : process.platform}. Your host workspace is ${this.options.cwd}. The read, write, edit, grep, find, ls, and bash tools operate locally on this host.${computer} Your transcript is private. Handle the user's request yourself unless the user explicitly asks you to involve a named teammate. Only then may you start a handoff through send_to_agent. A send queues a durable message and immediately returns its ID; it does not return the recipient's answer. Do not poll, invent replies, or send receipt-only acknowledgements. Follow relevant skills and never claim an action succeeded without tool evidence.`;
   }
 
   private view(agent: Agent): AgentView {
@@ -573,6 +586,11 @@ export class AgentController {
         active?.message.replyRequired &&
           active.message.senderId === recipient.profile.id,
       );
+      if (!active) throw new Error("No active request exists for this handoff");
+      if (!isReply && active.message.senderId !== null)
+        throw new Error("A bot may only reply to the teammate that requested this work");
+      if (!isReply && !userRequestedHandoff(active.message.text, recipient.profile))
+        throw new Error(`The user did not explicitly ask to involve ${recipient.profile.name}`);
       if (isReply && active?.replied)
         throw new Error("A result was already sent for this request");
       const message = this.sendAgentMessage(

@@ -96,6 +96,8 @@ class CheckRuntime implements AgentRuntime {
     }
     if (text.includes("delegate verification"))
       await this.onToolCall?.(id, "send_to_agent", { target: "worker", message: "Verify the durable handoff" });
+    if (text.includes("handle this yourself"))
+      await assert.rejects(() => this.onToolCall!(id, "send_to_agent", { target: "worker", message: "Unrequested handoff" }));
     if (text.includes("SlopBot request"))
       await this.onToolCall?.(id, "send_to_agent", { target: "lead", message: "Worker verified the handoff" });
     const timer = setTimeout(() => {
@@ -195,7 +197,11 @@ try {
   assert.ok(requests.includes("/v1/browser/page/navigate"));
   assert.ok(requests.includes("/v1/desktop"));
   assert.ok(browserProfiles.includes("lead"));
-  controller.sendMessage("lead", "delegate verification");
+  controller.sendMessage("lead", "handle this yourself");
+  for (let attempt = 0; attempt < 100 && controller.listAgents()[0]?.status !== "idle"; attempt++) await Bun.sleep(10);
+  assert.ok(!controller.listAgents().find((item) => item.id === "worker")?.messages.some((message) => message.text === "Unrequested handoff"));
+
+  controller.sendMessage("lead", "Ask WORKER to run delegate verification");
   for (let attempt = 0; attempt < 100; attempt++) {
     if (controller.listAgents().find((item) => item.id === "lead")?.messages.some((message) => message.text === "Worker verified the handoff")) break;
     await Bun.sleep(20);
