@@ -46,7 +46,6 @@ assert.ok(!stripVTControlCharacters(markdown.render(36).join("\n")).includes("**
 
 class CheckRuntime implements AgentRuntime {
   onToolCall: AgentRuntime["onToolCall"];
-  onApprovalRequest: AgentRuntime["onApprovalRequest"];
   onText: AgentRuntime["onText"];
   onTurnComplete: AgentRuntime["onTurnComplete"];
   async createSkill(_input: CreateSkillInput): Promise<Skill> { throw new Error("Skill creation is not exercised by this fake"); }
@@ -86,10 +85,6 @@ class CheckRuntime implements AgentRuntime {
   }
   async startTurn(id: ThreadId, input: readonly TurnInput[]): Promise<TurnId> {
     const text = input.find((item) => item.type === "text")?.text ?? "";
-    if (text.includes("approval verification")) {
-      const approved = await this.onApprovalRequest?.(id, "bash", { command: "publish release" });
-      this.onText?.(id, approved ? "Approved action ran" : "Action was denied");
-    }
     const tools = this.optionsByThread.get(id)?.dynamicTools?.map((tool) => tool.name) ?? [];
     if (tools.includes("browser")) {
       await this.onToolCall?.(id, "browser", { action: "navigate", url: "https://example.com" });
@@ -207,24 +202,6 @@ try {
     await Bun.sleep(20);
   }
   assert.ok(controller.listAgents().every((item) => item.status === "idle"));
-  controller.sendMessage("lead", "approval verification");
-  for (let attempt = 0; attempt < 100 && !controller.listAgents()[0]?.approval; attempt++) await Bun.sleep(10);
-  const approval = controller.listAgents()[0]?.approval;
-  assert.ok(approval);
-  assert.equal(approval.tool, "bash");
-  assert.match(approval.summary, /publish release/);
-  controller.resolveApproval("lead", approval.id, true);
-  for (let attempt = 0; attempt < 100 && controller.listAgents()[0]?.status !== "idle"; attempt++) await Bun.sleep(10);
-  assert.ok(controller.listAgents()[0]?.messages.some((message) => message.text.includes("Approved action ran")));
-
-  controller.sendMessage("lead", "approval verification denied");
-  for (let attempt = 0; attempt < 100 && !controller.listAgents()[0]?.approval; attempt++) await Bun.sleep(10);
-  const denied = controller.listAgents()[0]?.approval;
-  assert.ok(denied);
-  controller.resolveApproval("lead", denied.id, false);
-  for (let attempt = 0; attempt < 100 && controller.listAgents()[0]?.status !== "idle"; attempt++) await Bun.sleep(10);
-  assert.ok(controller.listAgents()[0]?.messages.some((message) => message.text.includes("Action was denied")));
-
   controller.sendMessage("lead", "long running verification");
   for (let attempt = 0; attempt < 100 && controller.listAgents()[0]?.status !== "running"; attempt++) await Bun.sleep(10);
   await controller.redirectAgent("lead", "Use the new direction");
@@ -249,7 +226,7 @@ try {
   const stored = new AgentStore(databasePath);
   assert.ok(stored.getAgent(createAgentId("worker")));
   stored.close();
-  console.log("Verified multi-bot messaging, session continuity, separate browser routing, approvals, user control, and terminal chat.");
+  console.log("Verified multi-bot messaging, session continuity, separate browser routing, user control, and terminal chat.");
 } finally {
   controller.close();
   server?.stop(true);

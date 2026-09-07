@@ -6,7 +6,7 @@ SlopBot is a simple app for running a small team of persistent AI bots.
 
 Each bot has its own role and private conversation. Bots communicate through clear messages and use one shared Linux computer. Inside that computer, each bot can keep its own browser profile and working session.
 
-The user sees what the team is doing, can redirect it at any time, and approves consequential actions.
+The user sees what the team is doing and can redirect or stop it at any time.
 
 ```mermaid
 flowchart LR
@@ -31,7 +31,6 @@ flowchart LR
 - [x] Every bot uses the same Linux computer and keeps a separate browser profile.
 - [x] The installer sets up SlopBot and Lima on macOS and Linux.
 - [x] Users can redirect or stop active bot work.
-- [x] Consequential tool calls pause for allow-once approval.
 
 ## Next
 
@@ -52,5 +51,4 @@ flowchart LR
 - Bots share information deliberately through messages.
 - All bots use one shared VM, with separate browser sessions where useful.
 - SlopBot stores coordination state so work survives restarts.
-- External and destructive actions require clear permission.
 - The interface stays focused on bots, their work, and their results.

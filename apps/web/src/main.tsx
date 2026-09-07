@@ -97,13 +97,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function Chat({
-  agent,
-  resolveApproval,
-}: Readonly<{
-  agent: Agent;
-  resolveApproval: (approved: boolean) => Promise<void>;
-}>): React.ReactNode {
+function Chat({ agent }: Readonly<{ agent: Agent }>): React.ReactNode {
   const scroll = useRef<HTMLElement>(null);
   useEffect(() => {
     if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
@@ -177,28 +171,6 @@ function Chat({
             {agent.name} is working<span className="animate-pulse">...</span>
           </span>
         </div>
-      )}
-      {agent.approval && (
-        <section className="mt-5 rounded-2xl border border-amber-700/60 bg-amber-950/30 p-4">
-          <div className="text-[11px] font-semibold tracking-[.08em] text-amber-300">
-            APPROVAL NEEDED
-          </div>
-          <p className="mt-2 text-sm text-zinc-100">{agent.approval.summary}</p>
-          <div className="mt-3 flex gap-2">
-            <button
-              className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-zinc-900"
-              onClick={() => void resolveApproval(true)}
-            >
-              Allow once
-            </button>
-            <button
-              className="rounded-lg border border-line px-3 py-2 text-sm text-zinc-200"
-              onClick={() => void resolveApproval(false)}
-            >
-              Deny
-            </button>
-          </div>
-        </section>
       )}
     </section>
   );
@@ -285,20 +257,6 @@ function App(): React.ReactNode {
       setComposerError(errorText(error));
     }
   };
-  const resolveApproval = async (approved: boolean): Promise<void> => {
-    if (!agent?.approval) return;
-    setComposerError("");
-    try {
-      await api.agents.resolveApproval({
-        agentId: agent.id,
-        approvalId: agent.approval.id,
-        approved,
-      });
-      await refresh();
-    } catch (error) {
-      setComposerError(errorText(error));
-    }
-  };
   const pasteImages = async (
     event: React.ClipboardEvent<HTMLInputElement>,
   ): Promise<void> => {
@@ -362,7 +320,7 @@ function App(): React.ReactNode {
                 Open provider and sign in
               </a>
               <p className="mt-3 text-center text-xs text-muted-foreground">
-                SlopBot will continue automatically after approval.
+                SlopBot will continue automatically after sign-in.
               </p>
             </div>
           ) : (
@@ -458,7 +416,7 @@ function App(): React.ReactNode {
             </button>
           </div>
         </header>
-        <Chat agent={agent} resolveApproval={resolveApproval} />
+        <Chat agent={agent} />
         <form className="border-t border-line p-4" onSubmit={send}>
           {images.length > 0 && (
             <div className="mb-2 flex gap-2 overflow-auto">

@@ -5,7 +5,6 @@ import { AgentStore } from "./agent-store.ts";
 import type { StoredAgent } from "./agent-store.ts";
 import {
   AgentIdSchema,
-  ApprovalRequestSchema,
   AgentProfileSchema,
   ImageAttachmentsSchema,
   createAgentId,
@@ -15,7 +14,6 @@ import type {
   AgentProfile,
   AgentStatus,
   AgentView,
-  ApprovalRequest,
   DesktopAssignment,
   ImageAttachment,
   MessageEnvelope,
@@ -94,11 +92,6 @@ type ActiveMessage = {
   replied: boolean;
 };
 
-type PendingApproval = Readonly<{
-  request: ApprovalRequest;
-  resolve: (approved: boolean) => void;
-}>;
-
 const messageRetryLimit = 3;
 const singleBotInstructions = "Handle the user's task directly. Inspect evidence, use your browser and tools when useful, preserve unrelated work, and report verified results.";
 
@@ -158,7 +151,6 @@ function normalizeAgentName(name: string): string {
 export class AgentController {
   private readonly agents = new Map<AgentId, Agent>();
   private readonly activeMessages = new Map<AgentId, ActiveMessage>();
-  private readonly pendingApprovals = new Map<AgentId, PendingApproval>();
   private readonly computer: SandboxComputer | undefined;
   private readonly options: AgentControllerOptions;
   private readonly store: AgentStore;
@@ -177,7 +169,6 @@ export class AgentController {
 
   async initialize(): Promise<void> {
     this.runtime.onToolCall = (threadId, tool, input) => this.handleToolCall(threadId, tool, input);
-    this.runtime.onApprovalRequest = (threadId, tool, input) => this.authorizeTool(threadId, tool, input);
     this.runtime.onText = (threadId, delta) => this.handleText(threadId, delta);
     this.runtime.onTurnComplete = (threadId, status) => this.handleTurnComplete(threadId, status);
     await this.runtime.connect();
@@ -192,8 +183,6 @@ export class AgentController {
   }
 
   close(): void {
-    for (const pending of this.pendingApprovals.values()) pending.resolve(false);
-    this.pendingApprovals.clear();
     this.runtime.close();
     this.store.close();
   }
@@ -322,22 +311,7 @@ export class AgentController {
 
   async stopAgent(rawAgentId: string): Promise<AgentView> {
     const agent = this.agent(AgentIdSchema.parse(rawAgentId));
-    const approval = this.pendingApprovals.get(agent.profile.id);
-    if (approval) {
-      this.pendingApprovals.delete(agent.profile.id);
-      approval.resolve(false);
-    }
     await this.runtime.cancelTurn(agent.threadId);
-    return this.view(agent);
-  }
-
-  resolveApproval(rawAgentId: string, rawApprovalId: string, approved: boolean): AgentView {
-    const agent = this.agent(AgentIdSchema.parse(rawAgentId));
-    const approvalId = z.uuid().parse(rawApprovalId);
-    const pending = this.pendingApprovals.get(agent.profile.id);
-    if (!pending || pending.request.id !== approvalId) throw new Error("Approval request is no longer active");
-    this.pendingApprovals.delete(agent.profile.id);
-    pending.resolve(approved);
     return this.view(agent);
   }
 
@@ -395,7 +369,6 @@ export class AgentController {
   ): ThreadOptions {
     return {
       cwd: this.options.cwd,
-      approvalPolicy: "never",
       sandbox: this.sandboxFor(profile),
       serviceName: "slopbot",
       developerInstructions: this.instructionsFor(profile, desktop),
@@ -432,7 +405,7 @@ export class AgentController {
     const computer = desktop
       ? " The browser and computer tools target the team's shared Linux VM, not the host. Other bots and the user can see and control the same desktop, so inspect its current state before acting. Its /workspace is a shared mount; normal bash runs on the host."
       : "";
-    return `You are ${profile.name} with stable bot ID ${profile.id}. ${profile.role}. ${profile.instructions} The active SlopBot team is ${roster}. Your runtime runs on ${process.platform === "darwin" ? "macOS" : process.platform}. Your host workspace is ${this.options.cwd}. The read, write, edit, grep, find, ls, and bash tools operate locally on this host.${computer} Your transcript is private. Share only deliberate handoffs through send_to_agent. A send queues a durable message and immediately returns its ID; it does not return the recipient's answer. Consequential tool calls pause for the user's approval. Do not poll, invent replies, or send receipt-only acknowledgements. Follow relevant skills and never claim an action succeeded without tool evidence.`;
+    return `You are ${profile.name} with stable bot ID ${profile.id}. ${profile.role}. ${profile.instructions} The active SlopBot team is ${roster}. Your runtime runs on ${process.platform === "darwin" ? "macOS" : process.platform}. Your host workspace is ${this.options.cwd}. The read, write, edit, grep, find, ls, and bash tools operate locally on this host.${computer} Your transcript is private. Share only deliberate handoffs through send_to_agent. A send queues a durable message and immediately returns its ID; it does not return the recipient's answer. Do not poll, invent replies, or send receipt-only acknowledgements. Follow relevant skills and never claim an action succeeded without tool evidence.`;
   }
 
   private view(agent: Agent): AgentView {
@@ -445,7 +418,6 @@ export class AgentController {
       desktop: agent.desktop,
       messages: [...this.store.listMessages(agent.profile.id)],
       status: agent.status,
-      approval: this.pendingApprovals.get(agent.profile.id)?.request ?? null,
     };
   }
 
@@ -614,47 +586,6 @@ export class AgentController {
       return `Queued message ${message.id} for ${recipient.profile.name} (${recipient.profile.id}).`;
     }
     throw new Error("Unknown tool");
-  }
-
-  private async authorizeTool(threadId: ThreadId, tool: string, input: unknown): Promise<boolean> {
-    const agent = this.agentByThread(threadId);
-    if (!agent) throw new Error("Agent not found for approval");
-    if (!this.requiresApproval(tool, input)) return true;
-    if (this.pendingApprovals.has(agent.profile.id)) throw new Error("This bot already has an action awaiting approval");
-    const request = ApprovalRequestSchema.parse({
-      id: crypto.randomUUID(),
-      tool,
-      summary: this.approvalSummary(tool, input),
-      requestedAt: new Date().toISOString(),
-    });
-    return new Promise<boolean>((resolve) => {
-      this.pendingApprovals.set(agent.profile.id, { request, resolve });
-    });
-  }
-
-  private requiresApproval(tool: string, input: unknown): boolean {
-    if (["bash", "edit", "write"].includes(tool)) return true;
-    if (tool !== "browser" && tool !== "computer") return false;
-    if (typeof input !== "object" || input === null) return true;
-    const action = Reflect.get(input, "action");
-    return tool === "browser"
-      ? action === "click" || action === "type" || action === "evaluate"
-      : action === "click" || action === "type" || action === "key";
-  }
-
-  private approvalSummary(tool: string, input: unknown): string {
-    if (typeof input === "object" && input !== null) {
-      const path = Reflect.get(input, "path");
-      if ((tool === "edit" || tool === "write") && typeof path === "string")
-        return `${tool === "edit" ? "Edit" : "Write"} ${path}`;
-      const command = Reflect.get(input, "command");
-      if (tool === "bash" && typeof command === "string") return `Run: ${command.slice(0, 900)}`;
-      const action = Reflect.get(input, "action");
-      const detail = JSON.stringify(input);
-      if (typeof action === "string") return `${tool} ${action}: ${(detail ?? "action").slice(0, 850)}`;
-    }
-    const detail = JSON.stringify(input);
-    return `${tool}: ${(detail ?? "action").slice(0, 900)}`;
   }
 
   private handleText(threadId: ThreadId, delta: string): void {

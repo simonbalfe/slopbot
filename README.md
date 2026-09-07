@@ -22,7 +22,7 @@ flowchart LR
 - Keep bots persistent: identities, conversations, and messages survive restarts.
 - Keep conversations private: bots share only deliberate handoffs.
 - Keep coordination visible: bot-to-bot requests and results appear in each bot's chat.
-- Keep the user in control: active work can be redirected or stopped, and consequential tools require approval.
+- Keep the user in control: active work can be redirected or stopped at any time.
 - Keep the computer separate: model credentials and SlopBot state stay outside the Linux computer.
 - Keep the product small: bots, messages, one computer, and a clear interface.
 

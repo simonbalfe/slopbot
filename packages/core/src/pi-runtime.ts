@@ -24,7 +24,6 @@ import { SandboxModeSchema, ThreadIdSchema } from "./runtime-types.ts";
 import type { ThreadId } from "./runtime-types.ts";
 
 export const TurnIdSchema = z.string().min(1).brand<"TurnId">();
-export const ApprovalPolicySchema = z.enum(["untrusted", "on-failure", "on-request", "never"]);
 export const TextInputSchema = z.object({
   type: z.literal("text"),
   text: z.string(),
@@ -51,7 +50,6 @@ export const DynamicToolSchema = z.object({
 });
 export const ThreadOptionsSchema = z.object({
   cwd: z.string().min(1),
-  approvalPolicy: ApprovalPolicySchema,
   sandbox: SandboxModeSchema,
   serviceName: z.string().min(1).optional(),
   developerInstructions: z.string().optional(),
@@ -77,7 +75,6 @@ export const PiAuthStateSchema = z.discriminatedUnion("status", [
 ]);
 
 export type TurnId = z.infer<typeof TurnIdSchema>;
-export type ApprovalPolicy = z.infer<typeof ApprovalPolicySchema>;
 export type Skill = Readonly<{
   name: string;
   description: string;
@@ -109,7 +106,6 @@ export class PiRuntime {
   onText: ((threadId: ThreadId, delta: string) => void) | undefined;
   onTurnComplete: ((threadId: ThreadId, status: TurnStatus) => void) | undefined;
   onToolCall: ((threadId: ThreadId, tool: string, input: unknown) => Promise<string | ImageAttachment>) | undefined;
-  onApprovalRequest: ((threadId: ThreadId, tool: string, input: unknown) => Promise<boolean>) | undefined;
   private readonly options: PiRuntimeOptions;
   private readonly sessions = new Map<ThreadId, ManagedSession>();
   private readonly cancelledThreads = new Set<ThreadId>();
@@ -334,12 +330,6 @@ export class PiRuntime {
       tools: [...(options.sandbox === "read-only" ? ["read", "grep", "find", "ls"] : ["read", "bash", "edit", "write", "grep", "find", "ls"]), ...customTools.map((tool) => tool.name)],
       customTools,
     });
-    session.agent.beforeToolCall = async ({ toolCall, args }) => {
-      if (!this.onApprovalRequest) return undefined;
-      const approved = await this.onApprovalRequest(threadId, toolCall.name, args);
-      return approved ? undefined : { block: true, reason: "The user denied this action", terminate: true };
-    };
-    session.agent.toolExecution = "sequential";
     const unsubscribe = session.subscribe((event) => this.handleSessionEvent(threadId, event));
     this.discardThread(threadId);
     this.sessions.set(threadId, { session, unsubscribe });
@@ -383,5 +373,5 @@ export class PiRuntime {
 
 export type AgentRuntime = Pick<PiRuntime,
   "connect" | "close" | "listSkills" | "createSkill" | "discardThread" | "startThread" | "resumeThread" |
-  "threadContainsText" | "startTurn" | "steerTurn" | "cancelTurn" | "onToolCall" | "onApprovalRequest" | "onText" | "onTurnComplete"
+  "threadContainsText" | "startTurn" | "steerTurn" | "cancelTurn" | "onToolCall" | "onText" | "onTurnComplete"
 >;

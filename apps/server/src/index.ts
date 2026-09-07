@@ -37,10 +37,6 @@ const RedirectMessageSchema = AgentIdSchema.extend({
 const AgentBrowserInputSchema = AgentIdSchema.extend({
   input: BrowserInputSchema,
 });
-const ApprovalDecisionSchema = AgentIdSchema.extend({
-  approvalId: z.uuid(),
-  approved: z.boolean(),
-});
 
 const config = loadConfig();
 process.env["PI_CODING_AGENT_DIR"] = join(config.dataDirectory, "pi");
@@ -93,9 +89,6 @@ export const appRouter = {
     stop: os
       .input(AgentIdSchema)
       .handler(({ input }) => agents.stopAgent(input.agentId)),
-    resolveApproval: os
-      .input(ApprovalDecisionSchema)
-      .handler(({ input }) => agents.resolveApproval(input.agentId, input.approvalId, input.approved)),
     clear: os
       .input(AgentIdSchema)
       .handler(({ input }) => agents.clearChat(input.agentId)),

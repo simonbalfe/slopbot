@@ -39,12 +39,6 @@ export const DesktopAssignmentSchema = z.object({
   browserProfile: AgentIdSchema,
   viewerUrl: z.url().nullable(),
 });
-export const ApprovalRequestSchema = z.object({
-  id: z.uuid(),
-  tool: z.string().min(1),
-  summary: z.string().min(1).max(1_000),
-  requestedAt: z.iso.datetime(),
-});
 
 export const AgentProfileSchema = z.object({
   id: AgentIdSchema,
@@ -93,7 +87,6 @@ export const AgentViewSchema = AgentProfileSchema.pick({
   desktop: DesktopAssignmentSchema.nullable(),
   messages: z.array(AgentMessageSchema),
   status: AgentStatusSchema,
-  approval: ApprovalRequestSchema.nullable(),
 });
 
 export type AgentId = z.infer<typeof AgentIdSchema>;
@@ -104,7 +97,6 @@ export type ImageAttachment = Readonly<z.infer<typeof ImageAttachmentSchema>>;
 export type DesktopAssignment = Readonly<
   z.infer<typeof DesktopAssignmentSchema>
 >;
-export type ApprovalRequest = Readonly<z.infer<typeof ApprovalRequestSchema>>;
 export type AgentProfile = Readonly<z.infer<typeof AgentProfileSchema>>;
 export type MessageEnvelope = Readonly<z.infer<typeof MessageEnvelopeSchema>>;
 export type AgentMessage = Readonly<z.infer<typeof AgentMessageSchema>>;
