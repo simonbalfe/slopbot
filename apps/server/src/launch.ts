@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "../../..");
 if (process.argv[2] === "uninstall") {
-  const stop = Bun.spawn([process.execPath, join(root, "apps/server/src/service.ts"), "stop"], {
+  const stop = Bun.spawn([process.execPath, join(root, "vm/manage.ts"), "stop"], {
     cwd: root, stdin: "inherit", stdout: "ignore", stderr: "ignore",
   });
   await stop.exited;

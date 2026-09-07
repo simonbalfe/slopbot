@@ -2,7 +2,7 @@
 
 An agent harness connects to one HTTP base URL. That computer owns the working filesystem, shell processes, Chromium profiles, and desktop. The service runs no model or agent session and needs no model credentials.
 
-SlopBot uses this API for browser and desktop control. Its standard file and shell tools run locally on the runtime host. The optional [remote-tools.ts](../packages/core/src/remote-tools.ts) adapter and executor endpoints remain available for other harnesses. JSON request/response schemas live in [computer.ts](../packages/contracts/src/computer.ts); browser operations are listed in the [desktop service reference](../packages/browser-runtime/README.md).
+SlopBot and this service run inside the same VM. SlopBot uses the API for browser and desktop control, while its standard file and shell tools execute directly in the VM workspace. The optional [remote-tools.ts](../packages/core/src/remote-tools.ts) adapter and executor endpoints remain available for other harnesses. JSON request/response schemas live in [computer.ts](../packages/contracts/src/computer.ts); browser operations are listed in the [desktop service reference](../packages/browser-runtime/README.md).
 
 ## Connect
 
@@ -11,9 +11,9 @@ SlopBot uses this API for browser and desktop control. Its standard file and she
 | `SLOPBOT_COMPUTER_URL` | Computer API address reachable from the Pi process |
 | `SLOPBOT_COMPUTER_VIEW_URL` | Address reachable from the user's browser; defaults to the API address |
 | `SLOPBOT_COMPUTER_API_KEY` | Optional shared key, matching the computer service's `SANDBOX_API_KEY` |
-| `SLOPBOT_WORKSPACE` | Local SlopBot host workspace; independent of the VM working directory |
+| `SLOPBOT_WORKSPACE` | Bot workspace inside the VM; the managed service uses `/home/slopbot/workspace` |
 
-Locally, native SlopBot and your browser use `http://127.0.0.1:6080`. Optional Docker packaging uses `http://host.docker.internal:6080` for the API. For a remote VM, supply its reachable URL or a private tunnel address. Lima manages the local VM lifecycle, while the HTTP API gives SlopBot the same computer connection across local and remote environments.
+Inside the VM, SlopBot uses `http://127.0.0.1:6080`. Lima forwards the viewer to the same address on the host. Optional Docker packaging uses `http://host.docker.internal:6080` for the API.
 
 When configured, send `X-AIO-API-Key` on every `/v1/*` request. The local service binds to loopback; VNC and CDP do not use this API key. Use a private connection for remote access.
 
@@ -27,7 +27,7 @@ When configured, send `X-AIO-API-Key` on every `/v1/*` request. The local servic
 {
   "id": "call-1",
   "name": "write",
-  "input": {"path": "/workspace/example.txt", "content": "Hello"}
+  "input": {"path": "/home/slopbot/workspace/example.txt", "content": "Hello"}
 }
 ```
 
@@ -37,7 +37,7 @@ Read it with a subsequent request:
 {
   "id": "call-2",
   "name": "read",
-  "input": {"path": "/workspace/example.txt"}
+  "input": {"path": "/home/slopbot/workspace/example.txt"}
 }
 ```
 
@@ -53,6 +53,6 @@ The user controls the same display at `/vnc/vnc.html`. VNC is the interactive di
 
 ## State boundary
 
-The computer retains work files and website logins. SlopBot keeps bot configuration, message records, model authentication, and Pi sessions outside the computer. Computer operations fail when the connection is unavailable; they never fall back to the harness host.
+The VM retains work files, website logins, bot configuration, message records, model authentication, skills, and Pi sessions. The selected host directory is a separate read-only mount at `/host`. Computer operations fail when the VM-local service is unavailable; they never fall back to the user's host system.
 
 The computer API is harness-independent. Full bot-state portability is separate work: the SQLite records are accessible, but Pi's detailed session history is still Pi-specific.

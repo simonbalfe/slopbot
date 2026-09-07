@@ -466,7 +466,6 @@ function App(): React.ReactNode {
       </section>
       <Desktop agent={agent} />
       <Settings
-        agent={agent}
         agents={agents}
         settings={settings}
         refresh={refresh}

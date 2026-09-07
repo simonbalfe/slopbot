@@ -4,8 +4,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl unzip nodejs git ripgrep rsync chromium fonts-liberation openbox xterm scrot xdotool dbus-x11 x11vnc xvfb
 if ! id slopbot >/dev/null 2>&1; then useradd -m -s /bin/bash slopbot; fi
-mkdir -p /data/browser /data/browser-profiles /opt/slopbot
+mkdir -p /data/browser /data/browser-profiles /data/runtime /home/slopbot/workspace /opt/slopbot
 chown -R slopbot:slopbot /data /opt/slopbot
+chown slopbot:slopbot /home/slopbot/workspace
 chmod 700 /data/browser /data/browser-profiles
 if ! command -v bun >/dev/null; then
   install_dir=$(mktemp -d)
@@ -28,7 +29,7 @@ Environment=DISPLAY=:99
 Environment=PORT=6080
 Environment=LISTEN_HOST=127.0.0.1
 Environment=BROWSER_PROFILE_DIR=/data/browser
-Environment=BROWSER_WORKSPACE=/workspace
+Environment=BROWSER_WORKSPACE=/home/slopbot/workspace
 Environment=BROWSER_CDP_PORT=9222
 Environment=BROWSER_CDP_PUBLIC_URL=http://127.0.0.1:9222
 ExecStart=/usr/local/bin/bun packages/browser-runtime/src/index.ts
@@ -38,8 +39,26 @@ TimeoutStopSec=20
 [Install]
 WantedBy=multi-user.target
 UNIT
-if test -f /etc/systemd/system/slopbot.service; then
-  systemctl disable --now slopbot.service
-  rm /etc/systemd/system/slopbot.service
-fi
+cat >/etc/systemd/system/slopbot.service <<'UNIT'
+[Unit]
+Description=SlopBot runtime
+After=network-online.target slopbot-desktop.service
+Wants=network-online.target slopbot-desktop.service
+[Service]
+User=slopbot
+WorkingDirectory=/opt/slopbot
+Environment=HOME=/home/slopbot
+Environment=PORT=4317
+Environment=SLOPBOT_HOST=0.0.0.0
+Environment=SLOPBOT_WORKSPACE=/home/slopbot/workspace
+Environment=SLOPBOT_DATA_DIR=/data/runtime
+Environment=SLOPBOT_COMPUTER_URL=http://127.0.0.1:6080
+Environment=SLOPBOT_COMPUTER_VIEW_URL=http://127.0.0.1:6080
+ExecStart=/usr/local/bin/bun apps/server/src/index.ts
+KillMode=mixed
+Restart=on-failure
+TimeoutStopSec=20
+[Install]
+WantedBy=multi-user.target
+UNIT
 systemctl daemon-reload

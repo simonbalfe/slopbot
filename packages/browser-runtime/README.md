@@ -1,8 +1,8 @@
 # Desktop runtime
 
-The service runs Chromium, Openbox, and shell/file tool implementations inside SlopBot's Linux VM. Pi's model runtime runs separately and calls this service over HTTP. Follow the [local setup](../../README.md#run-locally) and [computer interface](../../docs/computer-api.md).
+The service runs Chromium, Openbox, and shell/file tool implementations alongside SlopBot's Pi runtime inside the Linux VM. SlopBot calls it over VM-local HTTP. Follow the [local setup](../../README.md#install) and [computer interface](../../docs/computer-api.md).
 
-Each bot sends its stable ID in `X-SlopBot-Profile` and receives a private X display, VNC connection, and persistent Chromium profile. Dashboard screenshots, computer input, and VNC use that same display. The lead profile remains in `/data/browser`; additional profiles live under `/data/browser-profiles`. Downloads are separated under `/workspace/Downloads/<bot-id>`. The service binds to guest localhost and Lima forwards the HTTP viewer and the lead profile's CDP port `9222` to host localhost.
+Each bot sends its stable ID in `X-SlopBot-Profile` and receives a private X display, VNC connection, and persistent Chromium profile. Dashboard screenshots, computer input, and VNC use that same display. The lead profile remains in `/data/browser`; additional profiles live under `/data/browser-profiles`. Downloads are separated under `/home/slopbot/workspace/Downloads/<bot-id>`. The service binds to guest localhost and Lima forwards the HTTP viewer and the lead profile's CDP port `9222` to host localhost.
 
 ## API
 

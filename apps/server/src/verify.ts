@@ -164,7 +164,7 @@ try {
   await controller.browserScreenshot("worker");
   assert.equal(requests.at(-1), "/v1/desktop");
   assert.equal(browserProfiles.at(-1), "worker");
-  assert.ok(runtime.optionsByThread.get(lead.threadId)?.developerInstructions?.includes(`Your host workspace is ${directory}`));
+  assert.ok(runtime.optionsByThread.get(lead.threadId)?.developerInstructions?.includes(`Your workspace is ${directory}`));
   assert.ok(runtime.optionsByThread.get(lead.threadId)?.developerInstructions?.includes("WORKER (worker)"));
   const thread = controller.listAgents()[0]?.threadId;
   await assert.rejects(controller.updateBot({ name: "", role: "Role", instructions: "Instructions" }));

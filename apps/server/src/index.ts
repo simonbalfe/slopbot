@@ -37,6 +37,7 @@ const RedirectMessageSchema = AgentIdSchema.extend({
 const AgentBrowserInputSchema = AgentIdSchema.extend({
   input: BrowserInputSchema,
 });
+const UpdateAgentRequestSchema = AgentIdSchema.extend(UpdateAgentInputSchema.shape);
 
 const config = loadConfig();
 process.env["PI_CODING_AGENT_DIR"] = join(config.dataDirectory, "pi");
@@ -72,7 +73,9 @@ export const appRouter = {
       return { ok: true };
     }),
     profile: os.handler(() => agents.botProfile()),
-    update: os.input(UpdateAgentInputSchema).handler(({ input }) => agents.updateBot(input)),
+    update: os
+      .input(UpdateAgentRequestSchema)
+      .handler(({ input }) => agents.updateAgent(input.agentId, input)),
     send: os
       .input(SendMessageSchema)
       .handler(({ input }) =>

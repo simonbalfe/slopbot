@@ -1,10 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir, userInfo } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpus, homedir, tmpdir, totalmem, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
 const action = process.argv[2] ?? "up";
 const limaVersion = "2.2.0";
+const hostFiles = resolve(process.env["SLOPBOT_HOST_PATH"] ?? process.env["SLOPBOT_WORKSPACE_PATH"] ?? join(homedir(), "workspace"));
+const legacyDataDirectory = resolve(process.env["SLOPBOT_DATA_DIR"] ?? join(root, "data", "runtime"));
+const vmCpus = Math.max(2, Math.min(6, Math.floor(cpus().length / 2)));
+const vmMemoryGiB = Math.max(3, Math.min(8, Math.floor(totalmem() / 3 / 1024 ** 3)));
 
 const limaAssets = {
   "darwin-arm64": { archive: "Darwin-arm64", sha256: "bbdef91774885a0d05f7b048c4eb89ae2bcf3a0c252ae7ca7934e63df76d93c3" },
@@ -16,6 +20,11 @@ const limaAssets = {
 async function run(command: string[]): Promise<void> {
   const child = Bun.spawn(command, { cwd: root, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   if (await child.exited !== 0) throw new Error(`${command[0]} ${command[1]} failed`);
+}
+
+async function succeeds(command: string[]): Promise<boolean> {
+  const child = Bun.spawn(command, { cwd: root, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  return await child.exited === 0;
 }
 
 function findExecutable(name: string, fallbacks: readonly string[]): string | undefined {
@@ -98,32 +107,47 @@ if (action === "open") {
   await run([lima, "list", "slopbot"]);
 } else if (action === "shell") {
   const lima = await requireLima(false);
-  await run([lima, "shell", "--workdir=/workspace", "slopbot"]);
+  await run([lima, "shell", "--workdir=/home/slopbot/workspace", "slopbot"]);
 } else if (action === "stop") {
   const lima = await requireLima(false);
   await run([lima, "stop", "slopbot"]);
-} else if (action === "up" || action === "setup") {
+} else if (action === "up" || action === "setup" || action === "restart") {
   const lima = await requireLima(action === "setup");
   await ensureLinuxQemu();
+  await succeeds([process.execPath, join(root, "apps/server/src/stop-legacy-runtime.ts")]);
   const temporary = mkdtempSync(join(tmpdir(), "slopbot-vm-"));
   const guestArchive = `/tmp/${temporary.split("/").at(-1)}.tar`;
+  const guestDataArchive = `/tmp/${temporary.split("/").at(-1)}-data.tar`;
   try {
     const listing = Bun.spawn([lima, "list", "--format={{.Name}}"], { stdout: "pipe", stderr: "inherit" });
     const names = await new Response(listing.stdout).text();
     if (await listing.exited !== 0) throw new Error("Could not list Lima VMs");
     if (names.split("\n").includes("slopbot")) {
       await run([lima, "start", "-y", "slopbot"]);
+      if (!await succeeds([lima, "shell", "slopbot", "test", "-f", "/etc/systemd/system/slopbot.service"])) {
+        await run([lima, "stop", "slopbot"]);
+        await run([
+          lima, "edit", "-y",
+          "--cpus", String(vmCpus),
+          "--memory", String(vmMemoryGiB),
+          "--set", `.mounts = [{"location":${JSON.stringify(hostFiles)},"mountPoint":"/host","writable":false}]`,
+          "--set", '.portForwards = [{"guestPort":6080,"hostPort":6080},{"guestPort":9322,"hostPort":9222},{"guestPort":4317,"hostPort":4317},{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","guestPortRange":[1,65535],"ignore":true}]',
+          "slopbot",
+        ]);
+        await run([lima, "start", "-y", "slopbot"]);
+      }
     } else {
       const config = join(temporary, "lima.yaml");
       writeFileSync(config, JSON.stringify({
         base: ["template:_images/debian-13"],
-        cpus: 2, memory: "3GiB", disk: "20GiB",
+        cpus: vmCpus, memory: `${vmMemoryGiB}GiB`, disk: "20GiB",
         user: { name: "slopbot", uid: userInfo().uid, home: "/home/slopbot", shell: "/bin/bash" },
-        mounts: [{ location: resolve(process.env["SLOPBOT_WORKSPACE_PATH"] || join(homedir(), "workspace")), mountPoint: "/workspace", writable: true }],
+        mounts: [{ location: hostFiles, mountPoint: "/host", writable: false }],
         containerd: { system: false, user: false },
         portForwards: [
           { guestPort: 6080, hostPort: 6080 },
           { guestPort: 9322, hostPort: 9222 },
+          { guestPort: 4317, hostPort: 4317 },
           { guestIP: "0.0.0.0", guestIPMustBeZero: false, proto: "any", guestPortRange: [1, 65535], ignore: true },
         ],
       }, null, 2));
@@ -135,35 +159,75 @@ if (action === "open") {
     });
     if (await sourceArchive.exited !== 0) throw new Error("Could not package the computer service");
     await run([lima, "copy", archive, `slopbot:${guestArchive}`]);
+    let migrateData = false;
+    if (existsSync(legacyDataDirectory)) {
+      const entries = readdirSync(legacyDataDirectory).filter((entry) => entry === "pi" || entry.startsWith("slopbot.sqlite"));
+      if (entries.length > 0) {
+        const dataArchive = join(temporary, "runtime-data.tar");
+        await run(["tar", ...(process.platform === "darwin" ? ["--no-xattrs"] : []), "-cf", dataArchive, "-C", legacyDataDirectory, ...entries]);
+        await run([lima, "copy", dataArchive, `slopbot:${guestDataArchive}`]);
+        migrateData = true;
+      }
+    }
     await run([lima, "shell", "--workdir=/", "slopbot", "sh", "-eu", "-c", `
       staging=$(mktemp -d)
       source_archive=$1
-      trap 'rm -rf "$staging"; rm -f "$source_archive"' EXIT
+      data_archive=$2
+      force_restart=$3
+      trap 'rm -rf "$staging"; rm -f "$source_archive" "$data_archive"' EXIT
       tar -xf "$source_archive" -C "$staging"
       if ! cmp -s "$staging/vm/provision.sh" /opt/slopbot/vm/provision.sh; then
         sudo sh "$staging/vm/provision.sh"
       fi
+      if test -n "$data_archive" && ! test -e /data/runtime/.host-import-v2; then
+        sudo systemctl stop slopbot 2>/dev/null || true
+        tar --no-same-owner -xf "$data_archive" -C /data/runtime
+        session_dir=/data/runtime/pi/sessions/--home-slopbot-workspace--
+        mkdir -p "$session_dir"
+        for old_session_dir in /data/runtime/pi/sessions/*; do
+          if test "$old_session_dir" != "$session_dir" && test -d "$old_session_dir"; then
+            for session_file in "$old_session_dir"/*.jsonl; do
+              test -f "$session_file" || continue
+              case "\${session_file##*/}" in ._*) continue ;; esac
+              cp -f "$session_file" "$session_dir/"
+            done
+          fi
+        done
+        touch /data/runtime/.host-imported /data/runtime/.host-import-v2
+      fi
       set -- -ac --delete --exclude=node_modules --exclude=ui-dist --exclude=dist
+      changed=0
       if test -n "$(rsync "$@" --dry-run --itemize-changes "$staging/" /opt/slopbot/)"; then
-        sudo systemctl stop slopbot-desktop
+        sudo systemctl stop slopbot slopbot-desktop 2>/dev/null || true
         rsync "$@" "$staging/" /opt/slopbot/
         cd /opt/slopbot
         bun install --frozen-lockfile
+        bun run build
+        changed=1
       fi
-      sudo systemctl enable --now slopbot-desktop
-    `, "sh", guestArchive]);
+      sudo systemctl enable slopbot-desktop slopbot >/dev/null
+      sudo systemctl reset-failed slopbot-desktop slopbot
+      if test "$changed" = 1 || test "$force_restart" = 1; then
+        sudo systemctl restart slopbot-desktop slopbot
+      else
+        sudo systemctl start slopbot-desktop slopbot
+      fi
+    `, "sh", guestArchive, migrateData ? guestDataArchive : "", action === "restart" ? "1" : "0"]);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
   for (let attempt = 0; ; attempt++) {
     try {
-      const response = await fetch("http://127.0.0.1:6080/health", { signal: AbortSignal.timeout(2_000) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const responses = await Promise.all([
+        fetch("http://127.0.0.1:6080/health", { signal: AbortSignal.timeout(2_000) }),
+        fetch("http://127.0.0.1:4317/health", { signal: AbortSignal.timeout(2_000) }),
+      ]);
+      if (responses.some((response) => !response.ok)) throw new Error("SlopBot services are not healthy");
       break;
     } catch (error) {
       if (attempt === 59) throw error;
       await Bun.sleep(1_000);
     }
   }
-  console.log("Computer ready: http://127.0.0.1:6080/vnc/vnc.html");
+  console.log("SlopBot ready: http://127.0.0.1:4317");
 } else {
-  throw new Error("Usage: bun vm/manage.ts setup|up|status|open|shell|stop");
+  throw new Error("Usage: bun vm/manage.ts setup|up|restart|status|open|shell|stop");
 }

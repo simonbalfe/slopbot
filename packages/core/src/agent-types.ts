@@ -81,6 +81,7 @@ export const AgentViewSchema = AgentProfileSchema.pick({
   id: true,
   name: true,
   role: true,
+  instructions: true,
   sandbox: true,
 }).extend({
   threadId: ThreadIdSchema,

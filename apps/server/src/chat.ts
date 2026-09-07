@@ -92,7 +92,7 @@ async function main(): Promise<void> {
           const field = text.slice(1).split(/\s/, 1)[0];
           if (field !== "name" && field !== "role" && field !== "instructions") throw new Error("Unknown setting");
           const profile = await api.agents.profile();
-          await api.agents.update({ ...profile, [field]: text.slice(field.length + 1).trim() });
+          await api.agents.update({ agentId: profile.id, ...profile, [field]: text.slice(field.length + 1).trim() });
           output("Saved in SQLite.\n");
         } else if (text.startsWith("/")) output(`Unknown command. ${help}\n`);
         else if (text) await chat(text);

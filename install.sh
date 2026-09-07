@@ -45,8 +45,8 @@ cd "$install_dir"
 "$bun_bin" run build
 bin_dir=${SLOPBOT_BIN_DIR:-"$HOME/.local/bin"}
 data_dir=${SLOPBOT_DATA_DIR:-"$HOME/.local/share/slopbot-data"}
-workspace_dir=${SLOPBOT_WORKSPACE_PATH:-"$HOME/workspace"}
-mkdir -p "$bin_dir" "$workspace_dir"
+host_dir=${SLOPBOT_HOST_PATH:-${SLOPBOT_WORKSPACE_PATH:-"$HOME/workspace"}}
+mkdir -p "$bin_dir" "$host_dir"
 if [ "$managed_install" -eq 1 ]; then touch "$install_dir/.slopbot-managed-install"; fi
 quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 {
@@ -55,9 +55,9 @@ quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
   printf '\nexport SLOPBOT_BIN_PATH\nif [ -z "${SLOPBOT_DATA_DIR:-}" ]; then SLOPBOT_DATA_DIR='
   quote "$data_dir"
   printf '; export SLOPBOT_DATA_DIR; fi\n'
-  printf 'if [ -z "${SLOPBOT_WORKSPACE:-}" ]; then SLOPBOT_WORKSPACE='
-  quote "$workspace_dir"
-  printf '; export SLOPBOT_WORKSPACE; fi\nif [ -z "${SLOPBOT_WORKSPACE_PATH:-}" ]; then SLOPBOT_WORKSPACE_PATH="$SLOPBOT_WORKSPACE"; export SLOPBOT_WORKSPACE_PATH; fi\ncd '
+  printf 'if [ -z "${SLOPBOT_HOST_PATH:-}" ]; then SLOPBOT_HOST_PATH='
+  quote "$host_dir"
+  printf '; export SLOPBOT_HOST_PATH; fi\ncd '
   quote "$install_dir"
   printf ' || exit\nexec '
   quote "$bun_bin"
@@ -66,7 +66,7 @@ quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 chmod 755 "$bin_dir/slopbot"
 if [ "${SLOPBOT_SKIP_COMPUTER:-0}" != 1 ]; then
   printf '\nSetting up the SlopBot computer VM…\n'
-  SLOPBOT_DATA_DIR="$data_dir" SLOPBOT_WORKSPACE_PATH="$workspace_dir" "$bun_bin" vm/manage.ts setup
+  SLOPBOT_DATA_DIR="$data_dir" SLOPBOT_HOST_PATH="$host_dir" "$bun_bin" vm/manage.ts setup
 fi
 printf '\nInstalled SlopBot. Run: %s/slopbot\n' "$bin_dir"
 case ":$PATH:" in
