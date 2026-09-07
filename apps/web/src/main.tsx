@@ -267,6 +267,24 @@ function App(): React.ReactNode {
       setComposerError(errorText(error));
     }
   };
+  const clearChat = async (): Promise<void> => {
+    if (
+      !agent ||
+      agent.status === "running" ||
+      !agent.messages.length ||
+      !window.confirm(`Clear ${agent.name}'s entire chat?`)
+    )
+      return;
+    setComposerError("");
+    try {
+      await api.agents.clear({ agentId: agent.id });
+      setPrompt("");
+      setImages([]);
+      await refresh();
+    } catch (error) {
+      setComposerError(errorText(error));
+    }
+  };
   const resolveApproval = async (approved: boolean): Promise<void> => {
     if (!agent?.approval) return;
     setComposerError("");
@@ -425,6 +443,13 @@ function App(): React.ReactNode {
                 Stop
               </button>
             )}
+            <button
+              className="text-xs text-muted-foreground hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={agent.status === "running" || !agent.messages.length}
+              onClick={() => void clearChat()}
+            >
+              Clear chat
+            </button>
             <button
               className="text-xs text-muted-foreground hover:text-zinc-100"
               onClick={() => settings.current?.showModal()}
